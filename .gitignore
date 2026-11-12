@@ -1,0 +1,10 @@
+.alma-snapshots
+node_modules/
+.eve/config.local.json
+.eve/runs/
+.eve/verify-*/
+.env
+.env.*
+!.env.example
+*.local.json
+.DS_Store

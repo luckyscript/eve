@@ -1,0 +1,13 @@
+{
+  "baseUrl": "http://127.0.0.1:3425/v1",
+  "model": "macmini-magpie/bailian-token-plan/qwen3.8-max",
+  "apiKey": "",
+  "maxSteps": 12,
+  "maxToolCalls": 24,
+  "timeoutMs": 90000,
+  "maxOutputTokens": 4096,
+  "maxToolChars": 16000,
+  "temperature": 0,
+  "skillsDirs": ["skills"],
+  "userSkills": true
+}

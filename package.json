@@ -1,0 +1,17 @@
+{
+  "name": "eve-agent-poc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A verifiable local-first terminal agent proof of concept",
+  "engines": { "node": ">=22" },
+  "bin": { "eve": "bin/eve.mjs" },
+  "scripts": {
+    "start": "node bin/eve.mjs tui",
+    "eve": "node bin/eve.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check bin/eve.mjs && node --check src/config.mjs && node --check src/skills.mjs && node --check src/tools.mjs && node --check src/agent.mjs && node --check src/tui.mjs && node --check scripts/verify-live.mjs",
+    "verify:live": "node scripts/verify-live.mjs",
+    "verify:tui": "python3 scripts/verify-tui.py"
+  }
+}

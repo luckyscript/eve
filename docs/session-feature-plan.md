@@ -6,12 +6,16 @@ Design: `.eve/sessions/ID.json` is the versioned session/task ledger. Atomic rep
 
 ## Tasks
 
-- [ ] 1. Tests first: contract artifact rejection, safe paths, session locking/IDs and persistence. Implement `src/contracts.mjs`, `src/sessions.mjs` and durable hooks in `src/agent.mjs`.
-- [ ] 2. Integrate `run --session ID --contract FILE`, `sessions`, TUI `/sessions`, `/resume ID`, `/new`; preserve old runAgent behavior. Test separate CLI processes, full multi-tool history, failure continuation, forced interruption and no replay, private evidence and sanitized output.
-- [ ] 3. Real configured model: artifact acceptance/rejection and separate-process continuation. Update README and feature verification record. Self-review (no delegated agents per user).
-- [ ] 4. Targeted tests/syntax, explicit staging, credential scan that only reports counts; feature commit and SSH push. Only then run `npm test`, `npm run check`, `npm run verify:tui`; fix/push/repeat if necessary. Commit verification record and repeat postpush regression.
+- [x] 1. Tests first: contract artifact rejection, safe paths, session locking/IDs and persistence. Implement `src/contracts.mjs`, `src/sessions.mjs` and durable hooks in `src/agent.mjs`.
+- [x] 2. Integrate `run --session ID --contract FILE`, `sessions`, TUI `/sessions`, `/resume ID`, `/new`; preserve old runAgent behavior. Test separate CLI processes, full multi-tool history, failure continuation, forced interruption and no replay, private evidence and sanitized output.
+- [x] 3. Real configured model: artifact acceptance/rejection and separate-process continuation. Update README and feature verification record. Self-review (no delegated agents per user).
+- [x] 4. Targeted tests/syntax, explicit staging, credential scan that only reports counts; feature commit and SSH push. Only then run `npm test`, `npm run check`, `npm run verify:tui`; fix/push/repeat if necessary. Commit verification record and repeat postpush regression.
 
 Review focus: failed batches must not leave unmatched tool messages; lock recovery must not steal a live lock; symlinked state/contract targets must fail closed; contract values/errors must not leak into CLI; crash evidence must survive without any tool dispatch during load.
 
 Ruling: use whole-ledger atomic snapshots rather than JSONL — bounded PoC history and simpler torn-write protection; cost is O(history) per checkpoint. No exactly-once or mid-tool resumption claim.
 Ruling: user's explicit instructions authorize inline work and push on main, and override extra design approval/subagent/worktree gates. Full regression is intentionally deferred until after push.
+
+Completion: feature 334f64f, compatibility fix 5e4923c. Initial postpush regression 18/19 found an overly broad absolute .eve skill check; narrowed to workspace-relative paths with RED→GREEN coverage. After fix push: npm test 20/20, npm run check exit 0, npm run verify:tui 8/8. SSH ls-remote matched 5e4923c3ec22bc53a2dbba3d3417897bb43004ee. Verification record committed separately.
+
+Final review: author self-review (user forbids delegated agents). No deferred minor findings. Known design costs remain the whole-ledger write overhead, bounded context and task-boundary recovery only; no new evolution feature.

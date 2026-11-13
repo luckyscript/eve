@@ -49,3 +49,18 @@ Node 原生 ESM、零依赖。新增 sessions/contracts 模块，接入原有 lo
 Feature 提交 `334f64f`，使用 `git push git@github.com:luckyscript/eve.git main:main` 成功推送，无 force、未改远程。
 
 首次 postpush `npm test` 为 18/19：原有第 4 项技能注入测试失败，因此 `&&` 后的 check / verify:tui 未执行。根因是 load_skill 对绝对路径中所有 `.eve` 片段进行保护，误伤 workspace 祖先中的 `.eve/verify-test-*`；修正为检查相对 workspace 的路径片段，仍阻止 workspace 内 `.eve` 的访问。新增第 10 项针对测试先复现失败，再验证修复；不修改旧测试。修复提交推送后重新执行完整三项回归，结果随后补记。
+
+
+修复提交：`5e4923c3ec22bc53a2dbba3d3417897bb43004ee`。指定 SSH 地址推送成功后执行：
+
+```text
+npm test            exit 0 · 20/20 通过（原有 10 项 + 新增 10 项）· 约 1.47 秒
+npm run check       exit 0 · 全部 10 个运行模块/脚本语法通过
+npm run verify:tui  exit 0 · passed:true · 8/8 PTY 检查通过
+```
+
+TUI 覆盖：真实终端启动、help、skills、脱敏 config、sessions、resume、新会话、正常退出。测试创建的会话 fixture 在 finally 清理。此项仍是命令冒烟，不声称覆盖 TUI 中真实模型取消的端到端行为。
+
+2026-11-13T15:32:08Z 读取 SSH `ls-remote refs/heads/main`，与本地 HEAD 均为 `5e4923c3ec22bc53a2dbba3d3417897bb43004ee`，当时工作区干净。本记录的随后文档提交也按相同顺序推送后再次完整回归，最终 SHA 与结果由交付回复给出。
+
+提交前仅 stage 明确文件，扫描配置中实际认证字符串和常见私钥/GitHub token 标记，不输出值。Feature 的 14 个 staged 文件没有独立凭据命中；README 一处命中属于基线已公开的模型名片段（对照基线确认），单独排除，不作为凭据。修复的 3 个 staged 文件也没有认证字符串命中。完整私有历史与模型验证目录未被提交，未修改 origin URL、未 force push。

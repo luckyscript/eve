@@ -46,4 +46,6 @@ Node 原生 ESM、零依赖。新增 sessions/contracts 模块，接入原有 lo
 
 ## 推送后完整回归
 
-待 feature 提交并经指定 SSH 地址推送后，运行 npm test / npm run check / npm run verify:tui 并将真实结果提交补记。
+Feature 提交 `334f64f`，使用 `git push git@github.com:luckyscript/eve.git main:main` 成功推送，无 force、未改远程。
+
+首次 postpush `npm test` 为 18/19：原有第 4 项技能注入测试失败，因此 `&&` 后的 check / verify:tui 未执行。根因是 load_skill 对绝对路径中所有 `.eve` 片段进行保护，误伤 workspace 祖先中的 `.eve/verify-test-*`；修正为检查相对 workspace 的路径片段，仍阻止 workspace 内 `.eve` 的访问。新增第 10 项针对测试先复现失败，再验证修复；不修改旧测试。修复提交推送后重新执行完整三项回归，结果随后补记。

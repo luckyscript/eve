@@ -58,7 +58,7 @@ export async function createTools(cwd, discovered, config) {
     if (name === 'load_skill') {
       const s = discovered.skills.get(args.name);
       if (!s) throw new Error('未发现该技能');
-      if (path.resolve(s.file).split(path.sep).includes('.eve')) throw new Error('禁止访问受保护配置路径');
+      if (path.relative(root, s.file).split(path.sep).includes('.eve')) throw new Error('禁止访问受保护配置路径');
       return await loadSkill(s);
     }
     const target = await safePath(root, args.path ?? '.', { createParents: name === 'write_file' });

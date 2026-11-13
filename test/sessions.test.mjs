@@ -209,3 +209,16 @@ test('failed response: truncated tool intent is retained as raw evidence without
   assert.equal(run.messages.filter(m => m.role === 'assistant').length, 0);
   await assert.rejects(fs.stat(path.join(cwd, 'never')), { code: 'ENOENT' });
 });
+
+test('regression: .eve in workspace ancestry does not block ordinary workspace skills', async t => {
+  const base = await workspace(t);
+  const cwd = path.join(base, '.eve', 'isolated');
+  await fs.mkdir(path.join(cwd, 'skills', 'probe'), { recursive: true });
+  await fs.writeFile(path.join(cwd, 'skills/probe/SKILL.md'), '---\nname: probe\ndescription: safe workspace skill\n---\npublic body');
+  const { DEFAULTS } = await import('../src/config.mjs');
+  const { discoverSkills } = await import('../src/skills.mjs');
+  const { createTools } = await import('../src/tools.mjs');
+  const config = { ...DEFAULTS, userSkills: false };
+  const exec = await createTools(cwd, await discoverSkills(cwd, config), config);
+  assert.equal((await exec('load_skill', '{"name":"probe"}')).content.includes('public body'), true);
+});

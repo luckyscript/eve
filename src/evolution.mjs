@@ -63,11 +63,13 @@ async function evaluateArm({ cwd, config, skill, testCase, signal, fetchImpl }) 
   await fs.mkdir(path.join(cwd, 'skills', skill.name), { recursive: true, mode: 0o700 });
   await fs.writeFile(path.join(cwd, 'skills', skill.name, 'SKILL.md'), skill.content, { mode: 0o600 });
   for (const [file, text] of Object.entries(testCase.files)) await fs.writeFile(await safePath(cwd, file, { createParents: true }), text, { mode: 0o600 });
-  const result = await runSession({ cwd, config, prompt: testCase.prompt, contract: testCase.contract, signal, fetchImpl });
+  const result = await runSession({ cwd, config, prompt: testCase.prompt, contract: testCase.contract, requiredSkillHash: skill.hash, signal, fetchImpl });
   const ledger = (await loadSession(cwd, result.sessionId)).runs[0];
   const loaded = ledger.tools.some(t => t.name === 'load_skill' && t.status === 'completed' && t.result?.result?.hash === skill.hash);
+  const trace = ledger.events.filter(e => ['model_start', 'tool_intent', 'tool_end', 'skill_order_violation'].includes(e.type));
+  const ordered = trace.some(e => e.type === 'model_start' && e.loadedSkillHashes?.includes(skill.hash)) && !trace.some(e => e.type === 'skill_order_violation') && trace.filter(e => e.type === 'tool_intent' && e.name !== 'load_skill').every(e => e.loadedSkillHashes?.includes(skill.hash));
   // An incomplete baseline is uncertainty, not a demonstrated acceptance failure.
-  return { passed: result.status === 'completed' && result.verification.status === 'passed' && loaded, certain: result.modelStatus === 'completed' && ['passed', 'failed'].includes(result.verification.status) && loaded, loadedHash: loaded ? skill.hash : null, status: result.status, verification: result.verification, sessionId: result.sessionId, runId: result.runId, stats: result.stats };
+  return { requiredSkillHash: skill.hash, ordered, trace, passed: result.status === 'completed' && result.verification.status === 'passed' && loaded && ordered, certain: result.modelStatus === 'completed' && ['passed', 'failed'].includes(result.verification.status) && loaded && ordered, loadedHash: loaded ? skill.hash : null, status: result.status, verification: result.verification, sessionId: result.sessionId, runId: result.runId, stats: result.stats };
 }
 export async function evolve({ cwd, config, sessionId, runId, skill: name, suiteFile, frozenSuite, correction = '', maxRequests, timeoutMs = 600000, signal, fetchImpl = fetch, autoPromote = true }) {
   if (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 100) throw new Error('进化必须显式设置绝对请求预算 --max-requests 1–100');
@@ -95,7 +97,7 @@ export async function evolve({ cwd, config, sessionId, runId, skill: name, suite
   const experiment = { id: experimentId, status: 'reserved', suiteHash, parentHash: parent.hash, source: { sessionId, runId, contractHash: sha256(JSON.stringify(source.contract)) }, modelConfigHash, config: safeConfig, budget: { maxRequests, requestCeiling: ceiling, maxOutputTokens: ceiling * evalConfig.maxOutputTokens, timeoutMs }, cases: [] };
   await reserve(cwd, parent, suite.maxCandidates, experimentId, ceiling);
   const timer = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, timer]) : timer;
-  let candidate;
+  let candidate, evaluation, evaluationHash;
   const save = () => atomicPrivate(path.join(dir, 'experiment.json'), experiment);
   await save();
   try {
@@ -122,16 +124,25 @@ export async function evolve({ cwd, config, sessionId, runId, skill: name, suite
       experiment.cases.push(record); await save();
     }
     const passed = experiment.cases.length === suite.cases.length && experiment.cases.every(c => c.baseline.certain && c.candidate.certain && c.candidate.passed) && experiment.cases.some(c => !c.baseline.passed);
-    const evaluation = { version: 1, status: passed ? 'passed' : 'failed', policy: 'all-pass-no-regression-baseline-failure-v1', candidateHash: candidate.hash, parentHash: active, suiteHash, modelConfigHash, experimentId, cases: experiment.cases, limitation: 'Small-sample local evidence only; no general improvement guarantee.' };
-    const evaluationHash = sha256(JSON.stringify(evaluation));
+    evaluation = { version: 1, status: passed ? 'passed' : 'failed', policy: 'all-pass-no-regression-baseline-failure-v1', candidateHash: candidate.hash, parentHash: active, suiteHash, modelConfigHash, experimentId, cases: experiment.cases, limitation: 'Small-sample local evidence only; no general improvement guarantee.' };
+    evaluationHash = sha256(JSON.stringify(evaluation));
     const evaluations = await privateDirectory(cwd, ['evaluations']);
     await atomicPrivate(path.join(evaluations, evaluationHash + '.json'), evaluation);
     await registryTransaction(cwd, s => { const c = s.candidates[candidate.id]; c.status = passed ? 'evaluated' : 'rejected'; c.evaluationHash = evaluationHash; });
     experiment.status = passed ? 'evaluated' : 'rejected'; experiment.evaluationHash = evaluationHash; await save();
-    if (passed && autoPromote) { candidate = await promote(cwd, candidate.id); experiment.status = 'promoted'; await save(); }
+    combined.throwIfAborted();
+    if (passed && autoPromote) { candidate = await promote(cwd, candidate.id, { signal: combined }); experiment.status = 'promoted'; await save(); }
     return { status: experiment.status, experimentId, candidate, evaluationHash, evaluation, budget: experiment.budget };
   } catch (e) {
-    experiment.status = 'failed'; experiment.error = { code: e.code || 'EVOLUTION_FAILED', message: 'Generation, evaluation or publication failed; inspect private evidence. Active pointer was not deliberately replaced on failure.' }; await save();
+    // Reconcile even if a filesystem error happened after the registry rename.
+    const actualActiveHash = (await capabilities(cwd)).active[name];
+    if (candidate && actualActiveHash === candidate.hash) {
+      const recording_error = { code: e.code || 'RECORDING_ERROR', message: 'Publication committed; experiment recording failed. Registry active pointer reconciled.' };
+      experiment.status = 'promoted'; experiment.recording_error = recording_error; experiment.actualActiveHash = actualActiveHash;
+      try { await save(); } catch (recordError) { recording_error.retryCode = recordError.code || 'RECORDING_ERROR'; }
+      return { status: 'promoted', experimentId, candidate, evaluationHash, evaluation, budget: experiment.budget, recording_error, actualActiveHash };
+    }
+    experiment.status = 'failed'; experiment.actualActiveHash = actualActiveHash; experiment.error = { code: e.code || 'EVOLUTION_FAILED', message: 'Generation, evaluation or publication failed; inspect private evidence. Registry active pointer was reconciled; see actualActiveHash.' }; await save();
     if (candidate) await registryTransaction(cwd, s => { if (['candidate', 'evaluated'].includes(s.candidates[candidate.id].status)) s.candidates[candidate.id].status = 'rejected'; });
     throw e;
   }

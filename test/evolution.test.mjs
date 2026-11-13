@@ -265,3 +265,78 @@ test('evaluation timeouts are uncertainty and ordinary tools cannot read registr
   await assert.rejects(tools('read_file', JSON.stringify({ path: '.eve/evolution/state.json' })), /保护/);
   await assert.rejects(tools('load_skill', JSON.stringify({ name: result.candidate.id })), /未发现/);
 });
+
+for (const order of ['write-before-load', 'same-batch', 'read-before-load', 'edit-before-load', 'legal']) test(`required skill request ordering: ${order}`, async t => {
+  const f = await fixture(t); const { runAgent } = await import('../src/agent.mjs');
+  const { sha256 } = await registry();
+  await fs.writeFile(path.join(f.cwd, 'out.txt'), 'old');
+  const load = ['load_skill', { name: 'inventory' }], write = ['write_file', { path: 'out.txt', content: 'new' }];
+  const groups = order === 'legal' ? [[load], [write], []] : order === 'same-batch' ? [[load, write], []] : [[order === 'read-before-load' ? ['read_file', { path: 'out.txt' }] : order === 'edit-before-load' ? ['edit_file', { path: 'out.txt', old_text: 'old', new_text: 'new' }] : write], [load], []];
+  let i = 0;
+  const result = await runAgent({ ...f, config: { ...f.config, maxSteps: 4 }, prompt: 'Follow inventory', requiredSkillHash: sha256(skillText('old instructions')), fetchImpl: async () => {
+    const calls = groups[i++] || [];
+    return response(calls.length ? { content: null, tool_calls: calls.map(([name, args], j) => ({ id: `${i}-${j}`, type: 'function', function: { name, arguments: JSON.stringify(args) } })) } : { content: 'done' });
+  } });
+  if (order === 'legal') {
+    assert.equal(result.status, 'completed');
+    assert.equal(await fs.readFile(path.join(f.cwd, 'out.txt'), 'utf8'), 'new');
+    assert.ok(result.events.some(e => e.type === 'model_start' && e.loadedSkillHashes?.includes(sha256(skillText('old instructions')))));
+  } else {
+    assert.equal(result.error?.code, 'SKILL_ORDER');
+    assert.equal(await fs.readFile(path.join(f.cwd, 'out.txt'), 'utf8'), 'old');
+  }
+});
+
+test('post-publication experiment EIO returns published truth and recording error', async t => {
+  const f = await evolutionFixture(t); const { evolve } = await import('../src/evolution.mjs'); const r = await registry();
+  const rename = fs.rename.bind(fs);
+  t.mock.method(fs, 'rename', async (from, to) => {
+    if (to.endsWith('/experiment.json') && JSON.parse(await fs.readFile(from, 'utf8')).status === 'promoted') throw Object.assign(new Error('injected EIO'), { code: 'EIO' });
+    return rename(from, to);
+  });
+  const result = await evolve({ ...f, sessionId: f.source.sessionId, runId: f.source.runId, skill: 'inventory', maxRequests: 20 });
+  assert.equal(result.status, 'promoted');
+  assert.equal(result.recording_error.code, 'EIO');
+  assert.equal(result.actualActiveHash, result.candidate.hash);
+  assert.equal((await r.capabilities(f.cwd)).active.inventory, result.candidate.hash);
+});
+
+test('abort after evaluated save prevents publication', async t => {
+  const f = await evolutionFixture(t); const { evolve } = await import('../src/evolution.mjs'); const r = await registry();
+  const controller = new AbortController(), rename = fs.rename.bind(fs);
+  t.mock.method(fs, 'rename', async (from, to) => {
+    const evaluated = to.endsWith('/experiment.json') && JSON.parse(await fs.readFile(from, 'utf8')).status === 'evaluated';
+    const result = await rename(from, to); if (evaluated) controller.abort(new Error('injected abort')); return result;
+  });
+  await assert.rejects(evolve({ ...f, signal: controller.signal, sessionId: f.source.sessionId, runId: f.source.runId, skill: 'inventory', maxRequests: 20 }), /abort/);
+  assert.equal((await r.capabilities(f.cwd)).active.inventory, f.baseline.hash);
+});
+
+test('abort inside publication lock before active update leaves pointer unchanged', async t => {
+  const f = await evolutionFixture(t); const { evolve } = await import('../src/evolution.mjs'); const r = await registry();
+  const evaluated = await evolve({ ...f, sessionId: f.source.sessionId, runId: f.source.runId, skill: 'inventory', maxRequests: 20, autoPromote: false });
+  const controller = new AbortController(), read = fs.readFile.bind(fs);
+  t.mock.method(fs, 'readFile', async (file, ...args) => {
+    const data = await read(file, ...args);
+    if (String(file).endsWith(`/evaluations/${evaluated.evaluationHash}.json`)) controller.abort(new Error('inside lock abort'));
+    return data;
+  });
+  await assert.rejects(r.promote(f.cwd, evaluated.candidate.id, { signal: controller.signal }), /inside lock abort/);
+  assert.equal((await r.capabilities(f.cwd)).active.inventory, f.baseline.hash);
+});
+
+test('abort during registry staging before rename does not commit', async t => {
+  const f = await fixture(t); const r = await registry();
+  const baseline = await r.importBaseline(f.cwd, 'skills/inventory/SKILL.md');
+  const controller = new AbortController(), open = fs.open.bind(fs);
+  t.mock.method(fs, 'open', async (file, ...args) => {
+    const handle = await open(file, ...args);
+    if (String(file).includes('/state.json.') && String(file).endsWith('.tmp')) {
+      const sync = handle.sync.bind(handle);
+      handle.sync = async () => { await sync(); controller.abort(new Error('staging abort')); };
+    }
+    return handle;
+  });
+  await assert.rejects(r.registryTransaction(f.cwd, s => { s.active.inventory = 'a'.repeat(64); }, { signal: controller.signal }), /staging abort/);
+  assert.equal((await r.capabilities(f.cwd)).active.inventory, baseline.hash);
+});

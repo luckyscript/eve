@@ -22,11 +22,13 @@ export async function readPrivate(file) {
   if (!st.isFile() || st.isSymbolicLink() || st.size > 16777216) throw new Error('registry 对象必须是受限普通文件');
   return JSON.parse(await fs.readFile(file, 'utf8'));
 }
-export async function atomicPrivate(file, data) {
+export async function atomicPrivate(file, data, { signal } = {}) {
   const temp = `${file}.${randomUUID()}.tmp`;
   try {
     const h = await fs.open(temp, 'wx', 0o600);
     try { await h.writeFile(JSON.stringify(data) + '\n'); await h.sync(); } finally { await h.close(); }
+    // The rename is the publication commit point. Abort is checked after all awaits before it.
+    signal?.throwIfAborted();
     await fs.rename(temp, file);
     const dir = await fs.open(path.dirname(file), 'r');
     try { await dir.sync(); } finally { await dir.close(); }
@@ -40,12 +42,14 @@ async function state(dir) {
   } catch (e) { if (e.code !== 'ENOENT') throw e; return { version: 1, revision: 0, active: {}, candidates: {}, lineages: {} }; }
 }
 // A crash leaves a lock requiring explicit operator inspection: never steal a possibly live lock.
-export async function registryTransaction(cwd, fn) {
+export async function registryTransaction(cwd, fn, { signal } = {}) {
   const dir = await privateDirectory(cwd), lock = path.join(dir, 'publish.lock');
   await fs.mkdir(lock, { mode: 0o700 }).catch(e => { if (e.code === 'EEXIST') throw new Error('registry 跨进程锁被占用，需检查写者后重试'); throw e; });
   try {
+    signal?.throwIfAborted();
     const s = await state(dir), result = await fn(s, dir);
-    s.revision++; await atomicPrivate(path.join(dir, 'state.json'), s);
+    signal?.throwIfAborted();
+    s.revision++; await atomicPrivate(path.join(dir, 'state.json'), s, { signal });
     return result;
   } finally { await fs.rmdir(lock); }
 }
@@ -101,7 +105,7 @@ export async function publishedSkills(cwd) {
   }
   return result;
 }
-export async function promote(cwd, id) {
+export async function promote(cwd, id, { signal } = {}) {
   return registryTransaction(cwd, async s => {
     const c = s.candidates[id];
     if (!c || c.status !== 'evaluated' || !c.evaluationHash) throw new Error('候选缺少通过的独立评测');
@@ -110,9 +114,10 @@ export async function promote(cwd, id) {
     if (sha256(JSON.stringify(e)) !== c.evaluationHash || e.candidateHash !== c.hash || e.parentHash !== c.parent || e.suiteHash !== c.suiteHash || e.modelConfigHash !== c.modelConfigHash || e.status !== 'passed' || !e.cases?.length || !e.cases.some(x => !x.baseline.passed) || !e.cases.every(x => x.candidate.passed)) throw new Error('独立评测证据无效或未通过');
     await readObject(cwd, c.hash);
     if (s.active[c.name] !== c.parent) throw new Error('发布 parent CAS 冲突');
+    signal?.throwIfAborted();
     s.active[c.name] = c.hash; c.status = 'active'; c.promotedAt = new Date().toISOString();
     return structuredClone(c);
-  });
+  }, { signal });
 }
 export async function rollback(cwd, name) {
   return registryTransaction(cwd, async s => {

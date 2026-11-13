@@ -1,3 +1,4 @@
+import { sourceEvidence, requestEvidence } from './verification-evidence.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -7,6 +8,9 @@ import { loadConfig } from '../src/config.mjs';
 import { loadSession } from '../src/sessions.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
+process.env.EVE_REQUEST_AUDIT ||= path.join(root, '.eve/runs', `paid-${Date.now()}.jsonl`);
+const sourceStart = await sourceEvidence(root);
+const requestsStart = await requestEvidence();
 const config = await loadConfig({ cwd: root });
 const timeoutMs = 240000;
 const cwd = path.join(root, '.eve', `verify-agent-${randomUUID()}`);
@@ -33,7 +37,8 @@ async function cli(args) {
   child.once('close', code => { clearTimeout(timer); try { resolve({ code, result: JSON.parse(stdout) }); } catch { reject(new Error('live_cli_no_result')); } });
  });
 }
-const report = { at: new Date().toISOString(), workspace: path.relative(root, cwd), timeoutMsPerTask: timeoutMs, ceilings: { requestsPerTask: 8, outputTokensPerRequest: 1024, summaryRequestsPerTask: 1 }, passed: false, checks: {}, runs: [] };
+const suiteHash = createHash('sha256').update(JSON.stringify({ edit: JSON.parse(await fs.readFile(path.join(cwd, '.eve/contracts/edit.json'), 'utf8')), recall: JSON.parse(await fs.readFile(path.join(cwd, '.eve/contracts/recall.json'), 'utf8')) })).digest('hex');
+const report = { suiteHash, startedAt: new Date().toISOString(), workspace: path.relative(root, cwd), timeoutMsPerTask: timeoutMs, ceilings: { requestsPerTask: 8, outputTokensPerRequest: 1024, summaryRequestsPerTask: 1 }, passed: false, checks: {}, runs: [] };
 function record(label, r) { report.runs.push({ label, exitCode: r.code, status: r.result.status, verification: r.result.verification?.status, stats: r.result.stats, context: r.result.context, errorCode: r.result.error?.code }); assert.equal(r.code, 0, `${label}_failed`); }
 try {
  console.log('live: search → exact edit → model readback → independent contract');
@@ -77,6 +82,11 @@ try {
  report.passed = true;
 } catch (e) { report.error = e instanceof assert.AssertionError ? e.message.split('\n')[0] : 'live_verification_failed'; process.exitCode = 1; }
 finally {
+ report.endedAt = new Date().toISOString(); report.elapsedMs = Date.parse(report.endedAt) - Date.parse(report.startedAt);
+ report.sourceStart = sourceStart; report.sourceEnd = await sourceEvidence(root);
+ const requestsEnd = await requestEvidence(); report.paidRequests = requestsEnd.requests.slice(requestsStart.total); report.totalModelRequests = report.paidRequests.length;
+ report.requestLedger = { file: path.relative(root, process.env.EVE_REQUEST_AUDIT), digest: requestsEnd.digest, cumulativeTotal: requestsEnd.total };
+ if (sourceStart.digest !== report.sourceEnd.digest || sourceStart.head !== report.sourceEnd.head) { report.passed = false; process.exitCode = 1; }
  await fs.rm(path.join(cwd, '.eve/config.local.json'), { force: true });
  await fs.mkdir(path.join(root, '.eve/runs'), { recursive: true });
  await fs.writeFile(path.join(root, '.eve/runs/agent-verification.json'), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 });

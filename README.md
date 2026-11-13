@@ -148,7 +148,7 @@ node bin/eve.mjs evolve rollback inventory-report
 
 suite 支持 1–12 个 cases，每个 case 独立 input files、prompt、contract。文件只允许普通安全相对路径，不能注入技能、点目录或受保护文件；最多 30 份，每份 64 KiB。契约复用 `file_exists/json_equals/text_contains/write_readback`，另支持 `text_equals`（`text` 字段）和 `sha256_equals`（`sha256` 为 64 位小写十六进制）。输出目标同样隔离。suite 总计最多 256 KiB。
 
-宿主在生成前冻结 suite 原文和 SHA-256；候选内容同样固定 hash。生成器通过独立的**无工具**模型请求，仅接收原始任务、失败状态/代码、用户公开 correction 与旧技能正文，不接收 source contract、隐藏 prompts/files/assertions、suite 路径或逐题日志。它真实生成完整 frontmatter 和技能正文，宿主校验格式，然后各 case 对 baseline/候选分别建立 `.eve/evolution/experiments/` 内独立 workspace，只复制对应技能和声明的输入。两方使用同一模型配置、工具权限、步数/输出 token/工具数/超时预算，真正执行模型工具循环，按磁盘产物和实际 `load_skill` hash 验收。
+宿主在生成前冻结 suite 原文和 SHA-256；候选内容同样固定 hash。生成器通过独立的**无工具**模型请求，仅接收原始任务、失败状态/代码、用户公开 correction 与旧技能正文，不接收 source contract、隐藏 prompts/files/assertions、suite 路径或逐题日志。它真实生成完整 frontmatter 和技能正文，宿主校验格式，然后各 case 对 baseline/候选分别建立 `.eve/evolution/experiments/` 内独立 workspace，只复制对应技能和声明的输入。两方使用同一模型配置、工具权限、步数/输出 token/工具数/超时预算，真正执行模型工具循环，按磁盘产物和实际 `load_skill` hash 验收。评测两臂都强制先单独 load_skill，等待携带完整正文的后续模型请求之后才能执行任何 task 工具；同批 load+write、先读写后补加载均拒绝，trace 记录每次请求携带的 hash 和所有工具意图。
 
 MVP 发布策略：候选全 cases 通过、baseline 至少一例契约失败，所有运行必须正常完成并实际加载对应技能。baseline 正确 cases 因而零退步；缺加载、超时、中断等不确定结果均不发布。**这些只是小样本局部证据，不是一般能力提升保证**。不允许候选静态解析或模拟输出来替代真实输出验收。隐藏案例在执行阶段会供评测模型完成其任务，但不会反馈到生成器；本版没有把逐题日志迭代发送给生成器的搜索循环。
 
@@ -160,7 +160,7 @@ MVP 发布策略：候选全 cases 通过、baseline 至少一例契约失败，
 node bin/eve.mjs run --session inventory-dev --prompt "使用 inventory-report 生成报告" --contract .eve/contracts/report.json --auto-evolve --skill inventory-report --suite .eve/suites/inventory.json --correction "逐行 trim，丢弃空行" --max-requests 45 --json
 ```
 
-自动模式在原任务开始前冻结 suite，原任务不能替换本次评测定义。只有本轮契约失败才触发，**至多一个候选**，不重放原任务，不改写原任务失败状态；新技能从下一任务生效。预算是该次进化附加预算，原任务使用普通运行预算。自动流程失败返回 `evolution.status:failed`，原任务仍可检查。TUI 保持现有行为。
+自动模式在原任务开始前冻结 suite，原任务不能替换本次评测定义。只有本轮契约失败才触发，**至多一个候选**，不重放原任务，不改写原任务失败状态；新技能从下一任务生效。预算是该次进化附加预算，原任务使用普通运行预算。发布 commit 点前失败返回 `evolution.status:failed`，原任务仍可检查。发布 commit 点为 registry state 的原子 rename；之前取消不发布，之后若实验记录失败则 reconcile registry，返回 `promoted`、`recording_error` 和 `actualActiveHash`，不得误报未发布。TUI 保持现有行为。
 
 registry 的 content-addressed skill objects、candidate/evaluated/active/rejected/revoked 状态、parent/source run/contract hash、模型配置 hash、实验与验收日志保存于 ignored `.eve/evolution/`，目录 0700、宿主文件 0600。状态写入 fsync/rename，跨进程锁保护 publication CAS；崩溃遗留 `publish.lock` 时保守拒绝，需用户确认无写者后处理，不自动偷锁。active 指针在每轮开始读取一次，普通发现永不扫描未发布候选。`load_skill` 通过宿主返回已验证的发布字节，文件工具不能读写 registry。可信用户若直接修改私有状态属于本机信任边界外，不是防 root/OS 攻击的沙箱。
 

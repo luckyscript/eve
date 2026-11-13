@@ -1,3 +1,4 @@
+import { auditRequest } from './request-audit.mjs';
 import { TOOL_SCHEMAS, createTools } from './tools.mjs';
 import { discoverSkills, skillsCatalog } from './skills.mjs';
 import { ContextService, expireSkills, messageHash } from './context.mjs';
@@ -30,9 +31,11 @@ export function withAbort(promise, signal) {
     Promise.resolve(promise).then(value => { signal.removeEventListener('abort', aborted); resolve(value); }, error => { signal.removeEventListener('abort', aborted); reject(error); });
   });
 }
-export async function chatCompletion(config, messages, signal, fetchImpl = fetch, { tools = true } = {}) {
+export async function chatCompletion(config, messages, signal, fetchImpl = fetch, { tools = true, requestKind = tools ? 'task' : 'generation' } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
+  await auditRequest(config, messages, requestKind);
+  signal?.throwIfAborted();
   const response = await fetchImpl(config.baseUrl + '/chat/completions', {
     method: 'POST', headers, signal,
     body: JSON.stringify({ model: config.model, messages, ...(tools ? { tools: TOOL_SCHEMAS, tool_choice: 'auto' } : {}), stream: false, temperature: config.temperature, max_tokens: config.maxOutputTokens }),
@@ -56,7 +59,7 @@ export async function chatCompletion(config, messages, signal, fetchImpl = fetch
   }
   return { message: { role: 'assistant', content: message.content ?? null, ...(calls.length ? { tool_calls: calls } : {}) }, finishReason: choice.finish_reason, usage: data.usage || {} };
 }
-export async function runAgent({ cwd = process.cwd(), config, prompt, history = [], contextSummary, contextSources = [], previousSkills = [], runId, contract, compact = false, compactOnly = false, signal, onEvent = () => {}, fetchImpl = fetch, onCheckpoint = async () => {} }) {
+export async function runAgent({ cwd = process.cwd(), config, prompt, history = [], contextSummary, contextSources = [], previousSkills = [], runId, contract, requiredSkillHash, compact = false, compactOnly = false, signal, onEvent = () => {}, fetchImpl = fetch, onCheckpoint = async () => {} }) {
   const startedAt = Date.now();
   const timeout = AbortSignal.timeout(config.timeoutMs);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
@@ -68,6 +71,7 @@ export async function runAgent({ cwd = process.cwd(), config, prompt, history = 
   };
   const stats = { modelRequests: 0, toolCalls: 0, promptTokens: 0, completionTokens: 0, summaryRequests: 0 };
   let contextService;
+  const loadedSkills = new Map();
   let messages = [];
   let final = '', status = 'failed', error;
   try {
@@ -84,7 +88,7 @@ export async function runAgent({ cwd = process.cwd(), config, prompt, history = 
       safeSummary.modelSummary = ''; safeSummary.method = 'deterministic';
       await emit({ type: 'context_skill_expired' });
     }
-    const system = { role: 'system', content: SYSTEM + skillsCatalog(discovered.skills) + (contract ? '\nHost acceptance contract (current run): ' + JSON.stringify({ version: contract.version, assertions: contract.assertions.map(({ type, path }) => ({ type, path })) }) : '') };
+    const system = { role: 'system', content: SYSTEM + (requiredSkillHash ? `\nEvaluation ordering: first call load_skill for hash ${requiredSkillHash} ALONE. Wait for its result and a NEW model request carrying the full skill body before any task tool (including reads, listing, searching, edits and writes). Never batch task tools with the initial load.\n` : '') + skillsCatalog(discovered.skills) + (contract ? '\nHost acceptance contract (current run): ' + JSON.stringify({ version: contract.version, assertions: contract.assertions.map(({ type, path }) => ({ type, path })) }) : '') };
     messages = [...freshHistory, ...(compactOnly ? [] : [{ role: 'user', content: prompt }])];
     contextService = new ContextService({ config, system, schemas: TOOL_SCHEMAS, summary: safeSummary, runId, sources: contextSources, historyLength: freshHistory.length });
     await emit({ type: 'context_ready' }, { system });
@@ -93,7 +97,7 @@ export async function runAgent({ cwd = process.cwd(), config, prompt, history = 
       if (stats.modelRequests >= config.maxSteps - 1) throw new Error('summary_request_budget');
       stats.modelRequests++; stats.summaryRequests++;
       await emit({ type: 'summary_start', request: stats.modelRequests });
-      const answer = await withAbort(chatCompletion({ ...config, maxOutputTokens: Math.min(config.maxOutputTokens, Math.max(64, config.contextSummaryChars)) }, input, combined, fetchImpl, { tools: false }), combined);
+      const answer = await withAbort(chatCompletion({ ...config, maxOutputTokens: Math.min(config.maxOutputTokens, Math.max(64, config.contextSummaryChars)) }, input, combined, fetchImpl, { tools: false, requestKind: 'summary' }), combined);
       stats.promptTokens += Number(answer.usage.prompt_tokens) || 0;
       stats.completionTokens += Number(answer.usage.completion_tokens) || 0;
       if (answer.finishReason === 'length' || answer.message.tool_calls?.length) throw new Error('summary_protocol');
@@ -107,7 +111,12 @@ export async function runAgent({ cwd = process.cwd(), config, prompt, history = 
       combined.throwIfAborted();
       const requestMessages = await contextService.prepare(messages, { force: compact && step === 1, summarize, emit });
       if (stats.modelRequests >= config.maxSteps) throw new AgentError('STEP_BUDGET', '模型请求预算已耗尽（包含摘要请求）');
-      await emit({ type: 'model_start', step }); stats.modelRequests++;
+      // Prove which successfully loaded, complete bodies this particular request carries.
+      const loadedSkillHashes = [...loadedSkills].filter(([hash, content]) => requestMessages.some(m => {
+        if (m.role !== 'tool') return false;
+        try { const r = JSON.parse(m.content); return r.ok && r.result?.hash === hash && r.result.content === content; } catch { return false; }
+      })).map(([hash]) => hash);
+      await emit({ type: 'model_start', step, request: stats.modelRequests + 1, loadedSkillHashes, requestDigest: messageHash(requestMessages) }); stats.modelRequests++;
       const answer = await withAbort(chatCompletion(config, requestMessages, combined, fetchImpl), combined);
       await emit({ type: 'model_response', step, finishReason: answer.finishReason }, { answer });
       if (answer.finishReason === 'length') throw new AgentError('OUTPUT_LIMIT', '模型响应被截断，未执行其中任何工具');
@@ -125,8 +134,14 @@ export async function runAgent({ cwd = process.cwd(), config, prompt, history = 
       // Intentionally serial: reads can depend on writes, and skills precede task tools.
       for (const call of calls) {
         const name = call.function.name;
+        // Gate all task operations, including future tools, against the generating request,
+        // never against loads executed later in the same assistant batch.
+        if (requiredSkillHash && name !== 'load_skill' && !loadedSkillHashes.includes(requiredSkillHash)) {
+          await emit({ type: 'skill_order_violation', step, name, callId: call.id, requiredSkillHash, loadedSkillHashes });
+          throw new AgentError('SKILL_ORDER', 'Task tools require a subsequent model request carrying the loaded skill body');
+        }
         let result, attempted = false;
-        await emit({ type: 'tool_intent', name, callId: call.id }, { arguments: call.function.arguments });
+        await emit({ type: 'tool_intent', name, callId: call.id, step, loadedSkillHashes }, { arguments: call.function.arguments });
         if (stats.toolCalls >= config.maxToolCalls || combined.aborted) {
           exceeded = stats.toolCalls >= config.maxToolCalls;
           result = { ok: false, error: exceeded ? '工具调用预算已耗尽，未执行' : '运行已取消，未执行' };
@@ -140,6 +155,7 @@ export async function runAgent({ cwd = process.cwd(), config, prompt, history = 
             result = { ok: false, error: redact(e.message, config) };
           }
         }
+        if (name === 'load_skill' && result.ok) loadedSkills.set(result.result.hash, result.result.content);
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
         await emit({ type: 'tool_end', name, callId: call.id, ok: result.ok, ...(result.error ? { error: result.error } : {}), ...(name === 'load_skill' && result.ok ? { skill: result.result.name, hash: result.result.hash, injectedChars: result.result.content.length } : {}) }, { result, unknown: attempted && combined.aborted, notExecuted: !attempted });
       }

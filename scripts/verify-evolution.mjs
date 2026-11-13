@@ -1,3 +1,4 @@
+import { sourceEvidence, requestEvidence } from './verification-evidence.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -9,6 +10,9 @@ import { evolve } from '../src/evolution.mjs';
 import { importBaseline, capabilities, rollback, createCandidate, promote, readObject, atomicPrivate, privateDirectory } from '../src/registry.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
+process.env.EVE_REQUEST_AUDIT ||= path.join(root, '.eve/runs', `paid-${Date.now()}.jsonl`);
+const sourceStart = await sourceEvidence(root);
+const requestsStart = await requestEvidence();
 const totalTimeoutMs = Number(process.env.EVE_EVOLUTION_VERIFY_TIMEOUT_MS || 600000);
 if (!Number.isInteger(totalTimeoutMs) || totalTimeoutMs < 1000 || totalTimeoutMs > 1800000) throw new Error('EVE_EVOLUTION_VERIFY_TIMEOUT_MS must be 1000–1800000');
 const signal = AbortSignal.timeout(totalTimeoutMs);
@@ -74,6 +78,7 @@ try {
   const suite = { version: 1, maxCandidates: 2, budget: { maxSteps: 5, maxToolCalls: 12, maxOutputTokens: 2048, timeoutMs: config.timeoutMs }, cases: hidden.map(([id, text, items]) => ({ id, files: { 'inventory.txt': text }, prompt: task, contract: contract(items) })) };
   const suiteFile = path.join(cwd, 'hidden-suite.json');
   await fs.writeFile(suiteFile, JSON.stringify(suite), { mode: 0o600 });
+  report.suiteHash = (await import('../src/registry.mjs')).sha256(JSON.stringify(suite));
   console.log('evolution live: generating one real candidate; evaluating four hidden cases in both arms');
   const evolution = await evolve({ cwd, config, sessionId: source.sessionId, runId: source.runId, skill: 'inventory-report', suiteFile, correction: 'The inventory report should trim leading and trailing Unicode whitespace from each newline-delimited line, discard all lines empty after trimming, and preserve each remaining string, duplicates and input order. Empty input gives items:[] and count:0. Keep the same JSON output schema and read back after writing. Update the reusable procedure, not any particular input.', maxRequests: 45, timeoutMs: totalTimeoutMs, signal });
   report.evolution = evolution;
@@ -110,6 +115,13 @@ try {
   process.exitCode = 1;
 } finally {
   report.endedAt = new Date().toISOString();
+  report.elapsedMs = Date.parse(report.endedAt) - Date.parse(report.startedAt);
+  report.sourceStart = sourceStart; report.sourceEnd = await sourceEvidence(root);
+  const requestsEnd = await requestEvidence();
+  report.paidRequests = requestsEnd.requests.slice(requestsStart.total);
+  report.totalModelRequests = report.paidRequests.length;
+  report.requestLedger = { file: path.relative(root, process.env.EVE_REQUEST_AUDIT), digest: requestsEnd.digest, cumulativeTotal: requestsEnd.total };
+  if (report.sourceStart.digest !== report.sourceEnd.digest || report.sourceStart.head !== report.sourceEnd.head) { report.passed = false; process.exitCode = 1; }
   const runs = path.join(root, '.eve/runs'); await fs.mkdir(runs, { recursive: true, mode: 0o700 });
   await atomicPrivate(path.join(runs, 'evolution-verification.json'), report);
   console.log(JSON.stringify({ passed: report.passed, checks: report.checks, totalModelRequests: report.totalModelRequests, baselineHash: report.baselineHash, candidateHash: report.candidateHash, report: '.eve/runs/evolution-verification.json' }));

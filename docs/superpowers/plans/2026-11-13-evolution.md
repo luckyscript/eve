@@ -31,8 +31,8 @@ Single writer; preserve original research; no secret output/global config/force;
 
 Single feature boundary chosen: registry and evaluator ship together so publication is reviewable with actual acceptance evidence. User authorized main checkout and SSH push; no agents used. Self-review substitutes for a delegated review per explicit user instruction.
 
-Targeted: node --test test/evolution.test.mjs, 15/15 pass. Initial missing implementation and tool-write bypass failures were observed before implementation. Historical body reuse reproduced RED then fixed and GREEN; auto suite replacement reproduced RED then fixed and GREEN.
+Targeted: node --test test/evolution.test.mjs, 16/16 pass (including timeout uncertainty and explicit registry-read rejection). Initial missing implementation and tool-write bypass failures were observed before implementation. Historical body reuse reproduced RED then fixed and GREEN; auto suite replacement reproduced RED then fixed and GREEN.
 
 Real evolution: 55 model requests, four hidden cases. Baseline 1/4, generated candidate 4/4. Fresh process loaded candidate hash and passed contracts; rollback fresh process loaded baseline and failed the correct contract. Unassessed candidate rejected without pointer change. Full private evidence: .eve/runs/evolution-verification.json.
 
-Review decisions: stale registry locks fail closed instead of automatic stealing; host-owned suite is frozen before an automatic source task; historical skill tool bodies expire each run. Post-push complete regression pending at feature commit.
+Review decisions: stale registry locks fail closed instead of automatic stealing; host-owned suite is frozen before an automatic source task; historical skill tool bodies expire each run. Feature committed/pushed as 1c1ce77. First post-push full regression: 34/35 passed; protected private skill rejection had changed its error classification text. Existing security assertion retained; corrected missing-skill diagnostic to explicitly mention protected/unpublished paths. Targeted existing security test passed. Fix commit/push precedes a fresh full regression.

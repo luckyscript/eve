@@ -157,7 +157,7 @@ MVP 发布策略：候选全 cases 通过、baseline 至少一例契约失败，
 node bin/eve.mjs run --session inventory-dev --prompt "使用 inventory-report 生成报告" --contract .eve/contracts/report.json --auto-evolve --skill inventory-report --suite .eve/suites/inventory.json --correction "逐行 trim，丢弃空行" --max-requests 45 --json
 ```
 
-只有本轮契约失败才触发，**至多一个候选**，不重放原任务，不改写原任务失败状态；新技能从下一任务生效。预算是该次进化附加预算，原任务使用普通运行预算。自动流程失败返回 `evolution.status:failed`，原任务仍可检查。TUI 保持现有行为。
+自动模式在原任务开始前冻结 suite，原任务不能替换本次评测定义。只有本轮契约失败才触发，**至多一个候选**，不重放原任务，不改写原任务失败状态；新技能从下一任务生效。预算是该次进化附加预算，原任务使用普通运行预算。自动流程失败返回 `evolution.status:failed`，原任务仍可检查。TUI 保持现有行为。
 
 registry 的 content-addressed skill objects、candidate/evaluated/active/rejected/revoked 状态、parent/source run/contract hash、模型配置 hash、实验与验收日志保存于 ignored `.eve/evolution/`，目录 0700、宿主文件 0600。状态写入 fsync/rename，跨进程锁保护 publication CAS；崩溃遗留 `publish.lock` 时保守拒绝，需用户确认无写者后处理，不自动偷锁。active 指针在每轮开始读取一次，普通发现永不扫描未发布候选。`load_skill` 通过宿主返回已验证的发布字节，文件工具不能读写 registry。可信用户若直接修改私有状态属于本机信任边界外，不是防 root/OS 攻击的沙箱。
 
@@ -200,7 +200,7 @@ frontmatter 是明确限制的子集：单行 `key: value`，必填 `name` 与 `
 
 1. system prompt 只注入技能名字与描述，不预加载全部正文。
 2. 模型遇到匹配任务调用 `load_skill`。
-3. 加载时验证路径与发现时 SHA-256；文件已变化则要求重新运行。
+3. 加载时验证路径与发现时 SHA-256；文件已变化则要求重新运行。已发布技能返回本轮快照固定字节；续聊历史中的上轮技能 tool 正文会在派生上下文中过期，须重新加载当前快照，原账本保持不变。
 4. 完整正文通过 tool result 进入模型后续上下文，事件记录技能名、哈希与注入长度。
 
 示例技能：[workspace-report](skills/workspace-report/SKILL.md)。在一个包含 `inventory.txt` 的工作区中，请求“生成工作区报告”会引导模型加载该技能并创建 `report.json`。模型是否遵循技能应通过 trace 和输出验证，而非只看最终自述。

@@ -58,7 +58,7 @@ export async function createTools(cwd, discovered, config) {
     if (name === 'write_file' && Buffer.byteLength(args.content) > 65536) throw new Error('写入超过 64 KiB');
     if (name === 'load_skill') {
       const s = discovered.skills.get(args.name);
-      if (!s) throw new Error('未发现该技能');
+      if (!s) throw new Error('未发现该技能；未发布候选或受保护配置路径不可加载');
       if (!s.published && path.relative(root, s.file).split(path.sep).includes('.eve')) throw new Error('禁止访问受保护配置路径');
       return await loadSkill(s);
     }

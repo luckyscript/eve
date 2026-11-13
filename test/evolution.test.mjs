@@ -251,3 +251,17 @@ test('auto suite frozen before the task cannot be replaced by workspace writes',
   assert.equal(result.status, 'promoted');
   assert.equal(result.evaluation.suiteHash, frozenSuite.suiteHash);
 });
+
+test('evaluation timeouts are uncertainty and ordinary tools cannot read registry evidence', async t => {
+  const f = await evolutionFixture(t); const { evolve } = await import('../src/evolution.mjs'); const r = await registry();
+  const raw = JSON.parse(await fs.readFile(path.join(f.cwd, 'suite.json'), 'utf8')); raw.budget.timeoutMs = 30;
+  await fs.writeFile(path.join(f.cwd, 'suite.json'), JSON.stringify(raw));
+  const original = f.fetchImpl;
+  const result = await evolve({ ...f, fetchImpl: (url, init) => JSON.parse(init.body).tools ? new Promise(() => {}) : original(url, init), sessionId: f.source.sessionId, runId: f.source.runId, skill: 'inventory', maxRequests: 20 });
+  assert.equal(result.status, 'rejected');
+  assert.ok(result.evaluation.cases.every(c => !c.baseline.certain && !c.candidate.certain));
+  assert.equal((await r.capabilities(f.cwd)).active.inventory, f.baseline.hash);
+  const tools = await createTools(f.cwd, await discoverSkills(f.cwd, f.config), f.config);
+  await assert.rejects(tools('read_file', JSON.stringify({ path: '.eve/evolution/state.json' })), /保护/);
+  await assert.rejects(tools('load_skill', JSON.stringify({ name: result.candidate.id })), /未发现/);
+});

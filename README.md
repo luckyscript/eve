@@ -1,6 +1,6 @@
 # eve · Agent PoC
 
-一个可直接运行的终端 Agent 原型：**Agent Loop、skills 发现和按需注入、交互 TUI、分层配置、可重复验证**。
+一个可直接运行的终端 Agent 原型：**Agent Loop、持久任务会话、独立产物验收、skills 按需注入、交互 TUI、分层配置**。
 
 使用 Node.js 22+ 的原生模块，无第三方运行依赖，无需 `npm install`。本版使用自行实现的最小 OpenAI-compatible 工具循环，**未接入 Pi 或 DeepSeek Harness**；先固定 eve 的工具/技能/验证接口，后续可以替换运行时。
 
@@ -51,11 +51,57 @@ TUI 为滚动式终端界面，使用 readline 与 ANSI 状态显示，需要真
 | `/skills` | 发现并列出可用技能 |
 | `/config` | 显示脱敏配置 |
 | `/config set maxSteps 8` | 保存本地配置，重置会话 |
-| `/new` | 清空内存中的会话 |
+| `/sessions` | 列出本地持久会话的 ID、运行数与状态 |
+| `/resume ID` | 加载会话上下文，核验 ID，不重放工具 |
+| `/new` | 切换新会话 ID，首个任务开始时落盘 |
 | `/exit` | 退出 |
 | `Ctrl+C` | 执行中取消；空闲时退出 |
 
-会话仅在当前进程内保留；失败的轮次不加入后续会话，已写入的文件不自动回滚。非 TTY 环境使用 `run --prompt`。
+每个任务自动保存到当前会话；失败轮次的原始证据保留，续聊加入宿主失败说明。已写入的文件不自动回滚。非 TTY 环境使用 `run --prompt`。TUI 不设置验收契约，需要独立验收时使用 CLI 的 `--contract`。
+
+## 持久会话与独立验收
+
+```bash
+node bin/eve.mjs sessions --json
+node bin/eve.mjs run --session report-task --prompt "创建 result.json，answer 等于 42，并写后读取核验" --contract .eve/contracts/report.json --json
+# 独立进程继续同一会话；每轮验收需再次显式提供 --contract
+node bin/eve.mjs run --session report-task --prompt "检查上轮输出并继续" --contract .eve/contracts/report.json --json
+```
+
+不指定 `--session` 时自动创建会话，输出 `sessionId`。ID 仅接受 1–64 个 ASCII 字母、数字、下划线和连字符，首位必须为字母或数字。会话由 workspace 隔离；没有同 ID 的账本时 `run` 创建它，`/resume` 则要求它已存在。
+
+先由用户创建可信的 JSON 契约文件，例如 `.eve/contracts/report.json`：
+
+```json
+{
+  "version": 1,
+  "assertions": [
+    { "type": "file_exists", "path": "result.json" },
+    { "type": "json_equals", "path": "result.json", "field": ["answer"], "value": 42 },
+    { "type": "text_contains", "path": "result.json", "text": "answer" },
+    { "type": "write_readback", "path": "result.json" }
+  ]
+}
+```
+
+`--contract` 接受相对 workspace 或绝对路径：这是用户显式信任的宿主文件，可以放在 workspace 外或工具不能读写的 `.eve` 内。所有 assertion 的目标仍必须是 workspace 内的安全相对路径；禁止穿越、符号链接和受保护路径。建议把契约放在 `.eve/contracts/`，避免模型修改工作区内的契约源文件。每轮开始就加载并保存契约定义，模型运行后不会重新加载定义。不支持 JS、eval、shell 或模型自评断言。
+
+- `file_exists` 要求普通文件存在。
+- `json_equals` 用字符串数组 `field` 逐层选择 JSON 自有字段，空数组表示整个文档；严格比较 JSON 值，缺失字段失败。
+- `text_contains` 要求 UTF-8 文本包含指定字符串。
+- `write_readback` 要求**本轮**有成功的 `write_file`，宿主独立读回文件，将实际字节 SHA-256 与本轮最后一次同路径成功写入的内容比较；无需相信模型的“已经验证”。
+
+内容断言限 256 KiB；每份文件契约限 256 KiB、1–100 个 assertions。验证从真实文件读取，结果不输出文件正文或 expected/actual 值，记录判定和内容哈希。JSON 输出分别包含 `modelStatus`、`verification.status` 和最终 `status`。有契约时只有模型 `completed` 且验收 `passed` 才成功；口头完成而产物错误返回 `failed` / `ACCEPTANCE_FAILED`、退出码 1。无契约时 `not_requested` 只表示未做独立验收，保持原有完成语义；模型失败时验收为 `not_checked`。`run_end` 是原有模型循环结束事件，`acceptance_end` 给出宿主最终判定。
+
+原始提示、完整模型/工具消息、工具参数/结果、事件、契约、失败与能力快照保存在 ignored `.eve/sessions/ID.json`，文件 0600、sessions 目录 0700。CLI 的摘要不含完整历史，按当前认证配置脱敏；本地原始证据可能包含敏感文件内容，请按凭据文件管理。工具（包括 `load_skill`）不能访问 `.eve`。`.eve/state/` 也已预留并忽略。
+
+账本是 version 1 JSON；每个检查点在同目录写私有临时文件、fsync、rename，再同步目录。每会话锁跨进程排斥写者，活跃锁明确拒绝；PID 已消失时回收死锁。损坏账本拒绝覆盖，遗留临时文件不参与加载。锁采用本机 PID，PID 被重用时保守拒绝，异常遗留 `.lock.reap` 需人工确认无写者后处理。不同会话不互斥共享 workspace 的产物写入。
+
+中断后的首次 load/list/resume 把未结束运行标为 `interrupted`，未决工具意图标为 `unknown`；不会自动重新调用任何工具。续聊只构造派生历史，为缺失 tool result 补充 unknown 结果以维持模型协议，原始账本消息不被改写。失败轮次和已完成的同批工具结果保留。**这不是任意工具中间点无损恢复或 exactly-once 执行**：崩溃/取消窗口中的写入必须核验实际文件，再由新任务决定下一步。原子保存也不等于产物的多文件事务或 OS 安全沙箱。
+
+后续进化层可以由宿主调用 `loadSession(cwd, id)` / `listSessions(cwd)`，读取 `runs[].status/error/verification`、`contract`、`capabilitySnapshot`（工具 schema、模型与已发现技能的哈希）、`tools` 与原始 `messages/events`。`openSession().save()/close()` 为显式保存接口；`sessionHistory()` 仅构建续聊视图。自动候选生成、评测晋级和修改技能不在本功能内。
+
+新增真实验证：`npm run verify:sessions-live`。它用已有本地配置，在隔离 workspace 中通过三个独立 CLI 进程验证创建、历史续聊和错误产物拒绝；保留 ignored 私有账本，清除临时复制的认证文件，脱敏摘要写入 `.eve/runs/session-verification.json`。实际记录见 [会话功能验证](docs/session-feature-verification.md)。
 
 ## Agent Loop
 
@@ -162,7 +208,7 @@ npm run verify:live
 - 阻止 `..`、绝对路径、符号链接，以及 `.git`、`.eve`、`.env*`、`*.local.json` 等受保护路径。
 - 路径检查不是 OS 沙箱，仍存在恶意并发换路径的 TOCTOU 风险；不要用于不可信多租户或恶意工作区。
 - 用户任务授权写入由模型指令表达，本版没有逐次审批 UI；只在允许模型修改的工作区运行。
-- 没有持久会话、崩溃恢复、原子多文件事务、自动补偿、自动上下文压缩。上下文过大时明确报错并要求 `/new`。
+- 支持持久会话和任务边界续聊；不支持进程中间点 exactly-once 恢复、工具自动重放、原子多文件事务、自动补偿或自动上下文压缩。上下文过大时明确报错并要求 `/new`。
 - 模型 API 超时/HTTP 错误明确失败，不将半成品输出标为完成；不自动切换模型。
 - token 统计依赖兼容服务返回的 usage，不估算货币费用。
 
@@ -174,8 +220,12 @@ src/config.mjs              配置与脱敏
 src/skills.mjs              发现、元数据、按需加载与哈希校验
 src/tools.mjs               工具 schema、参数和路径检查
 src/agent.mjs               模型协议、执行循环、预算与事件
-src/tui.mjs                 终端界面与会话
+src/tui.mjs                 终端界面与会话选择
+src/sessions.mjs            私有账本、锁、原子保存、边界恢复与任务验收编排
+src/contracts.mjs           声明式契约加载、路径检查与独立读回验收
 skills/workspace-report/    示例技能
 scripts/verify-live.mjs      随机标记的真实模型验证
-test/core.test.mjs           核心与回归测试
+test/core.test.mjs           原有 10 项核心与回归测试
+test/sessions.test.mjs       持久化、跨进程、崩溃、验收、安全边界测试
+scripts/verify-sessions-live.mjs  真实模型会话续聊与独立验收
 ```

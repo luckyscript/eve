@@ -8,9 +8,15 @@ import select
 import signal
 import sys
 import time
+import subprocess
+import uuid
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
+session_id = 'tui-probe-' + uuid.uuid4().hex
+subprocess.run(['node', '--input-type=module', '-e',
+                "import { openSession } from './src/sessions.mjs'; const s = await openSession(process.cwd(), process.argv[1]); await s.close();",
+                session_id], cwd=root, check=True, capture_output=True)
 pid, fd = pty.fork()
 if pid == 0:
     os.chdir(root)
@@ -50,6 +56,8 @@ try:
     checks['helpCommand'] = command('/help', '工具仅限 workspace')
     checks['skillsCommand'] = command('/skills', 'workspace-report')
     checks['redactedConfigCommand'] = command('/config', 'apiKey')
+    checks['sessionsCommand'] = command('/sessions', session_id)
+    checks['resumeCommand'] = command('/resume ' + session_id, '已恢复会话 ' + session_id)
     checks['newConversationCommand'] = command('/new', '已开始新会话')
     os.write(fd, b'/exit\n')
     deadline = time.monotonic() + 5
@@ -77,3 +85,4 @@ finally:
         except ProcessLookupError:
             pass
     os.close(fd)
+    (root / '.eve' / 'sessions' / (session_id + '.json')).unlink(missing_ok=True)

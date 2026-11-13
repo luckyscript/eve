@@ -55,12 +55,16 @@ export async function chatCompletion(config, messages, signal, fetchImpl = fetch
   }
   return { message: { role: 'assistant', content: message.content ?? null, ...(calls.length ? { tool_calls: calls } : {}) }, finishReason: choice.finish_reason, usage: data.usage || {} };
 }
-export async function runAgent({ cwd = process.cwd(), config, prompt, history = [], signal, onEvent = () => {}, fetchImpl = fetch }) {
+export async function runAgent({ cwd = process.cwd(), config, prompt, history = [], signal, onEvent = () => {}, fetchImpl = fetch, onCheckpoint = async () => {} }) {
   const startedAt = Date.now();
   const timeout = AbortSignal.timeout(config.timeoutMs);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const events = [];
-  const emit = event => { const e = { ...event, elapsedMs: Date.now() - startedAt }; events.push(e); onEvent(e); };
+  const emit = async (event, details = {}) => {
+    const e = { ...event, elapsedMs: Date.now() - startedAt }; events.push(e);
+    await onCheckpoint({ messages, events, event: e, details });
+    onEvent(e);
+  };
   const stats = { modelRequests: 0, toolCalls: 0, promptTokens: 0, completionTokens: 0 };
   let messages = [];
   let final = '', status = 'failed', error;
@@ -69,19 +73,22 @@ export async function runAgent({ cwd = process.cwd(), config, prompt, history = 
     const discovered = await withAbort(discoverSkills(cwd, config), combined);
     combined.throwIfAborted();
     const execute = await withAbort(createTools(cwd, discovered, config), combined);
-    emit({ type: 'skills_discovered', skills: [...discovered.skills.keys()], warnings: discovered.warnings });
+    await emit({ type: 'capability_snapshot' }, { skills: [...discovered.skills.values()].map(({ name, hash }) => ({ name, hash })) });
+    await emit({ type: 'skills_discovered', skills: [...discovered.skills.keys()], warnings: discovered.warnings });
     messages = [{ role: 'system', content: SYSTEM + skillsCatalog(discovered.skills) }, ...history.filter(m => m.role !== 'system'), { role: 'user', content: prompt }];
+    await emit({ type: 'context_ready' });
     if (messages.length > 100 || JSON.stringify(messages).length > 200000) throw new AgentError('CONTEXT', '会话超出 PoC 上下文上限，请 /new 开始新会话');
     for (let step = 1; step <= config.maxSteps; step++) {
       combined.throwIfAborted();
-      emit({ type: 'model_start', step }); stats.modelRequests++;
+      await emit({ type: 'model_start', step }); stats.modelRequests++;
       const answer = await withAbort(chatCompletion(config, messages, combined, fetchImpl), combined);
+      await emit({ type: 'model_response', step, finishReason: answer.finishReason }, { answer });
       if (answer.finishReason === 'length') throw new AgentError('OUTPUT_LIMIT', '模型响应被截断，未执行其中任何工具');
       stats.promptTokens += Number(answer.usage.prompt_tokens) || 0;
       stats.completionTokens += Number(answer.usage.completion_tokens) || 0;
       messages.push(answer.message);
       const calls = answer.message.tool_calls || [];
-      emit({ type: 'model_end', step, toolCount: calls.length, finishReason: answer.finishReason });
+      await emit({ type: 'model_end', step, toolCount: calls.length, finishReason: answer.finishReason });
       if (!calls.length) {
         if (answer.finishReason === 'length') throw new AgentError('OUTPUT_LIMIT', '模型达到输出上限，未把截断答案标为成功');
         if (typeof answer.message.content !== 'string' || !answer.message.content.trim()) throw new AgentError('PROTOCOL', '模型返回空答案');
@@ -91,13 +98,14 @@ export async function runAgent({ cwd = process.cwd(), config, prompt, history = 
       // Intentionally serial: reads can depend on writes, and skills precede task tools.
       for (const call of calls) {
         const name = call.function.name;
-        let result;
+        let result, attempted = false;
+        await emit({ type: 'tool_intent', name, callId: call.id }, { arguments: call.function.arguments });
         if (stats.toolCalls >= config.maxToolCalls || combined.aborted) {
           exceeded = stats.toolCalls >= config.maxToolCalls;
           result = { ok: false, error: exceeded ? '工具调用预算已耗尽，未执行' : '运行已取消，未执行' };
         } else {
-          stats.toolCalls++;
-          emit({ type: 'tool_start', name, callId: call.id });
+          stats.toolCalls++; attempted = true;
+          await emit({ type: 'tool_start', name, callId: call.id }, { arguments: call.function.arguments });
           try {
             const value = await withAbort(execute(name, call.function.arguments, combined), combined);
             result = { ok: true, result: value };
@@ -106,7 +114,7 @@ export async function runAgent({ cwd = process.cwd(), config, prompt, history = 
           }
         }
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
-        emit({ type: 'tool_end', name, callId: call.id, ok: result.ok, ...(result.error ? { error: result.error } : {}), ...(name === 'load_skill' && result.ok ? { skill: result.result.name, hash: result.result.hash, injectedChars: result.result.content.length } : {}) });
+        await emit({ type: 'tool_end', name, callId: call.id, ok: result.ok, ...(result.error ? { error: result.error } : {}), ...(name === 'load_skill' && result.ok ? { skill: result.result.name, hash: result.result.hash, injectedChars: result.result.content.length } : {}) }, { result, unknown: attempted && combined.aborted, notExecuted: !attempted });
       }
       combined.throwIfAborted();
       if (exceeded) throw new AgentError('TOOL_BUDGET', '工具调用预算已耗尽');
@@ -119,6 +127,6 @@ export async function runAgent({ cwd = process.cwd(), config, prompt, history = 
     status = code === 'CANCELLED' ? 'cancelled' : code === 'TIMEOUT' ? 'timeout' : ['STEP_BUDGET', 'TOOL_BUDGET'].includes(code) ? 'budget_exceeded' : 'failed';
   }
   stats.elapsedMs = Date.now() - startedAt;
-  emit({ type: 'run_end', status, stats, ...(error ? { error } : {}) });
+  await emit({ type: 'run_end', status, stats, ...(error ? { error } : {}) });
   return { status, final: redact(final, config), ...(error ? { error } : {}), stats, events, messages };
 }

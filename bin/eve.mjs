@@ -3,17 +3,17 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { loadConfig, redactConfig, redact, DEFAULTS, setLocalConfig } from '../src/config.mjs';
 import { discoverSkills } from '../src/skills.mjs';
-import { runAgent } from '../src/agent.mjs';
+import { runSession, listSessions } from '../src/sessions.mjs';
 import { startTui } from '../src/tui.mjs';
 
-const help = `eve — local workspace agent PoC\n\n  npm start                              交互 TUI\n  npm run eve -- run --prompt "任务"      单次运行\n  npm run eve -- run --prompt "任务" --json\n  npm run eve -- skills                  技能列表\n  npm run eve -- config show             查看脱敏配置\n  npm run eve -- config init             创建无密钥本地配置\n  npm run eve -- config set model NAME   设置本地配置\n\n全局选项：--cwd DIR  --model NAME  --base-url URL\n密钥仅通过 EVE_API_KEY 或 .eve/config.local.json 提供。\n`;
+const help = `eve — local workspace agent PoC\n\n  npm start                              交互 TUI\n  npm run eve -- run --prompt "任务"      单次运行\n  npm run eve -- run --prompt "任务" --json\n  npm run eve -- sessions                持久会话列表\n  npm run eve -- run --session ID --contract FILE --prompt \"任务\"\n  npm run eve -- skills                  技能列表\n  npm run eve -- config show             查看脱敏配置\n  npm run eve -- config init             创建无密钥本地配置\n  npm run eve -- config set model NAME   设置本地配置\n\n全局选项：--cwd DIR  --model NAME  --base-url URL\n密钥仅通过 EVE_API_KEY 或 .eve/config.local.json 提供。\n`;
 function parse(argv) {
   const positional = [], options = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (!arg.startsWith('--')) { positional.push(arg); continue; }
     if (['--json', '--help'].includes(arg)) { options[arg.slice(2)] = true; continue; }
-    if (!['--cwd', '--model', '--base-url', '--prompt'].includes(arg)) throw new Error('未知命令行选项');
+    if (!['--cwd', '--model', '--base-url', '--prompt', '--session', '--contract'].includes(arg)) throw new Error('未知命令行选项');
     if (!argv[i+1] || argv[i+1].startsWith('--')) throw new Error(`${arg} 缺少值`);
     options[arg.slice(2)] = argv[++i];
   }
@@ -40,15 +40,17 @@ try {
   } else if (command === 'skills') {
     const d = await discoverSkills(cwd, config);
     print({ skills: [...d.skills.values()].map(({ name, description, hash }) => ({ name, description, hash })), warnings: d.warnings });
+  } else if (command === 'sessions') {
+    print(await listSessions(cwd));
   } else if (command === 'run') {
     if (!o.prompt) throw new Error('run 需要 --prompt');
     const controller = new AbortController();
     const abort = () => controller.abort(); process.on('SIGINT', abort);
     try {
-      const r = await runAgent({ cwd, config, prompt: o.prompt, signal: controller.signal,
+      const r = await runSession({ cwd, config, prompt: o.prompt, sessionId: o.session, contractFile: o.contract, signal: controller.signal,
         onEvent: e => { if (!o.json && ['model_start', 'tool_start', 'tool_end'].includes(e.type)) process.stderr.write(redact(`[${e.type}] ${e.name || `step ${e.step}`}${e.ok === false ? ' failed' : ''}\n`, config)); } });
       const { messages, ...output } = r;
-      print(o.json ? output : r.status === 'completed' ? r.final : `${r.status}: ${r.error?.message}`);
+      print(o.json ? output : `session: ${r.sessionId} · ${r.status} · acceptance: ${r.verification.status}\n${r.status === 'completed' ? r.final : r.error?.message}`);
       if (r.status !== 'completed') process.exitCode = 1;
     } finally { process.removeListener('SIGINT', abort); }
   } else if (command === 'tui') await startTui({ cwd, config });

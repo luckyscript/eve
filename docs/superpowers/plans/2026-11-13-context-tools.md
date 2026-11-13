@@ -8,9 +8,9 @@
 
 **Review focus:** overlapping edit matches; symlink and protected search roots; oversized recent tool groups; failed summary API; stale skill body surviving compaction.
 
-- [ ] Write failing real filesystem tool tests; implement search_files/edit_file and contract edit readback; targeted tests.
-- [ ] Write failing context/mock persistence tests; implement validated configuration, group selection, source provenance, summaries and raw journal separation; targeted tests.
-- [ ] Add TUI /tools /status /compact and CLI equivalents; update README and repeatable live script.
-- [ ] Review diff locally (no additional agents), targeted validation, feature commit and SSH push main:main.
-- [ ] Postpush npm test, npm run check, npm run verify:tui; repair/push/repeat if needed.
-- [ ] Live search/edit/readback contract and cross-process compact/recall random fact with 180000–300000 ms per run; ignored sanitized evidence. Report full SHAs and limitations.
+- [x] Write failing real filesystem tool tests; implement search_files/edit_file and contract edit readback; targeted tests.
+- [x] Write failing context/mock persistence tests; implement validated configuration, group selection, source provenance, summaries and raw journal separation; targeted tests.
+- [x] Add TUI /tools /status /compact and CLI equivalents; update README and repeatable live script.
+- [x] Review diff locally (no additional agents), targeted validation, feature commit and SSH push main:main.
+- [x] Postpush npm test, npm run check, npm run verify:tui; repair/push/repeat if needed.
+- [x] Live search/edit/readback contract and cross-process compact/recall random fact with 180000–300000 ms per run; ignored sanitized evidence. Report full SHAs and limitations.

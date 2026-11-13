@@ -93,15 +93,75 @@ node bin/eve.mjs run --session report-task --prompt "检查上轮输出并继续
 
 内容断言限 256 KiB；每份文件契约限 256 KiB、1–100 个 assertions。验证从真实文件读取，结果不输出文件正文或 expected/actual 值，记录判定和内容哈希。JSON 输出分别包含 `modelStatus`、`verification.status` 和最终 `status`。有契约时只有模型 `completed` 且验收 `passed` 才成功；口头完成而产物错误返回 `failed` / `ACCEPTANCE_FAILED`、退出码 1。无契约时 `not_requested` 只表示未做独立验收，保持原有完成语义；模型失败时验收为 `not_checked`。`run_end` 是原有模型循环结束事件，`acceptance_end` 给出宿主最终判定。
 
-原始提示、完整模型/工具消息、工具参数/结果、事件、契约、失败与能力快照保存在 ignored `.eve/sessions/ID.json`，文件 0600、sessions 目录 0700。CLI 的摘要不含完整历史，按当前认证配置脱敏；本地原始证据可能包含敏感文件内容，请按凭据文件管理。工具（包括 `load_skill`）不能访问 `.eve`。`.eve/state/` 也已预留并忽略。
+原始提示、完整模型/工具消息、工具参数/结果、事件、契约、失败与能力快照保存在 ignored `.eve/sessions/ID.json`，文件 0600、sessions 目录 0700。CLI 的摘要不含完整历史，按当前认证配置脱敏；本地原始证据可能包含敏感文件内容，请按凭据文件管理。文件工具不能访问 `.eve`；`load_skill` 只允许通过宿主返回当前快照中的已发布字节。`.eve/state/` 也已预留并忽略。
 
 账本是 version 1 JSON；每个检查点在同目录写私有临时文件、fsync、rename，再同步目录。每会话锁跨进程排斥写者，活跃锁明确拒绝；PID 已消失时回收死锁。损坏账本拒绝覆盖，遗留临时文件不参与加载。锁采用本机 PID，PID 被重用时保守拒绝，异常遗留 `.lock.reap` 需人工确认无写者后处理。不同会话不互斥共享 workspace 的产物写入。
 
 中断后的首次 load/list/resume 把未结束运行标为 `interrupted`，未决工具意图标为 `unknown`；不会自动重新调用任何工具。续聊只构造派生历史，为缺失 tool result 补充 unknown 结果以维持模型协议，原始账本消息不被改写。失败轮次和已完成的同批工具结果保留。**这不是任意工具中间点无损恢复或 exactly-once 执行**：崩溃/取消窗口中的写入必须核验实际文件，再由新任务决定下一步。原子保存也不等于产物的多文件事务或 OS 安全沙箱。
 
-后续进化层可以由宿主调用 `loadSession(cwd, id)` / `listSessions(cwd)`，读取 `runs[].status/error/verification`、`contract`、`capabilitySnapshot`（工具 schema、模型与已发现技能的哈希）、`tools` 与原始 `messages/events`。`openSession().save()/close()` 为显式保存接口；`sessionHistory()` 仅构建续聊视图。自动候选生成、评测晋级和修改技能不在本功能内。
+进化层由宿主调用 `loadSession(cwd, id)` / `listSessions(cwd)`，读取 `runs[].status/error/verification`、`contract`、`capabilitySnapshot`（工具 schema、模型与已发现技能的哈希）、`tools` 与原始 `messages/events`。`openSession().save()/close()` 为显式保存接口；`sessionHistory()` 仅构建续聊视图。技能候选生成与评测发布见下节。
 
 新增真实验证：`npm run verify:sessions-live`。它用已有本地配置，在隔离 workspace 中通过三个独立 CLI 进程验证创建、历史续聊和错误产物拒绝；保留 ignored 私有账本，清除临时复制的认证文件，脱敏摘要写入 `.eve/runs/session-verification.json`。实际记录见 [会话功能验证](docs/session-feature-verification.md)。
+
+## 可验证的技能自进化
+
+手工维护的 `skills/**/SKILL.md` 仍是 **trusted user** 指令，不是进化系统发布的候选。普通工具现在禁止写入配置的技能根目录或任何 `SKILL.md`，防止绕过验收。用户可以手工编辑原始技能；参与进化前显式导入 baseline，同名 active 存在时禁止再次 import 覆盖：
+
+```bash
+node bin/eve.mjs evolve import --file skills/inventory-report/SKILL.md
+node bin/eve.mjs run --session inventory-dev --contract .eve/contracts/report.json --prompt "使用 inventory-report 生成报告"
+# 使用上一步 JSON 输出中的 runId；source 必须契约失败且实际加载当前 active hash
+node bin/eve.mjs evolve --session inventory-dev --run r-UUID --skill inventory-report --suite .eve/suites/inventory.json --correction "逐行 trim、丢弃空行、保留重复和顺序" --max-requests 45
+node bin/eve.mjs capabilities
+node bin/eve.mjs evolve rollback inventory-report
+```
+
+默认评测成功后自动发布；`--no-promote` 只评测，之后 `evolve promote c-UUID` 发布。没有评测、评测失败、证据 hash 改变或 parent CAS 冲突均拒绝发布。回滚撤回当前版本，**只影响未来运行，不撤销文件等外部副作用**；已启动运行保存的 skill hash/字节不会热换。baseline 不可再回滚。
+
+用户创建可信的声明式 suite（建议 `.eve/suites/NAME.json`，工具无法读取）。没有 JS、eval、脚本字段：
+
+```json
+{
+  "version": 1,
+  "maxCandidates": 1,
+  "budget": { "maxSteps": 5, "maxToolCalls": 12, "maxOutputTokens": 2048, "timeoutMs": 90000 },
+  "cases": [
+    {
+      "id": "trim-and-blank",
+      "files": { "inventory.txt": " apple \n\n pear\n" },
+      "prompt": "使用 inventory-report 生成 report.json，然后读回",
+      "contract": {
+        "version": 1,
+        "assertions": [
+          { "type": "json_equals", "path": "report.json", "field": ["items"], "value": ["apple", "pear"] },
+          { "type": "json_equals", "path": "report.json", "field": ["count"], "value": 2 },
+          { "type": "write_readback", "path": "report.json" }
+        ]
+      }
+    }
+  ]
+}
+```
+
+suite 支持 1–12 个 cases，每个 case 独立 input files、prompt、contract。文件只允许普通安全相对路径，不能注入技能、点目录或受保护文件；最多 30 份，每份 64 KiB。契约复用 `file_exists/json_equals/text_contains/write_readback`，另支持 `text_equals`（`text` 字段）和 `sha256_equals`（`sha256` 为 64 位小写十六进制）。输出目标同样隔离。suite 总计最多 256 KiB。
+
+宿主在生成前冻结 suite 原文和 SHA-256；候选内容同样固定 hash。生成器通过独立的**无工具**模型请求，仅接收原始任务、失败状态/代码、用户公开 correction 与旧技能正文，不接收 source contract、隐藏 prompts/files/assertions、suite 路径或逐题日志。它真实生成完整 frontmatter 和技能正文，宿主校验格式，然后各 case 对 baseline/候选分别建立 `.eve/evolution/experiments/` 内独立 workspace，只复制对应技能和声明的输入。两方使用同一模型配置、工具权限、步数/输出 token/工具数/超时预算，真正执行模型工具循环，按磁盘产物和实际 `load_skill` hash 验收。
+
+MVP 发布策略：候选全 cases 通过、baseline 至少一例契约失败，所有运行必须正常完成并实际加载对应技能。baseline 正确 cases 因而零退步；缺加载、超时、中断等不确定结果均不发布。**这些只是小样本局部证据，不是一般能力提升保证**。不允许候选静态解析或模拟输出来替代真实输出验收。隐藏案例在执行阶段会供评测模型完成其任务，但不会反馈到生成器；本版没有把逐题日志迭代发送给生成器的搜索循环。
+
+进化付费必须显式提供 `--max-requests N`（1–100），开始前校验最坏请求数 `1 + 2 × cases × maxSteps` 不超预算，生成调用计 1 次；输出 token 请求上限为该请求数乘 `maxOutputTokens`。每轮上下文仍有既有 200k 字符硬上限，模型 usage 只作实测统计，不估算货币费用。suite 默认预算为 6 steps/12 tools/2048 output tokens/60s；最大 12/24/4096/120s。`--evolution-timeout-ms` 控制整个实验，默认 600000，最高 1800000。持久谱系限制 `maxCandidates` 为 1–3，首次实验锁定上限，后续不能提高；失败生成也消耗一次机会，不能反复查询同一候选。不同谱系预算独立。
+
+一次命令启用日常自动进化：
+
+```bash
+node bin/eve.mjs run --session inventory-dev --prompt "使用 inventory-report 生成报告" --contract .eve/contracts/report.json --auto-evolve --skill inventory-report --suite .eve/suites/inventory.json --correction "逐行 trim，丢弃空行" --max-requests 45 --json
+```
+
+只有本轮契约失败才触发，**至多一个候选**，不重放原任务，不改写原任务失败状态；新技能从下一任务生效。预算是该次进化附加预算，原任务使用普通运行预算。自动流程失败返回 `evolution.status:failed`，原任务仍可检查。TUI 保持现有行为。
+
+registry 的 content-addressed skill objects、candidate/evaluated/active/rejected/revoked 状态、parent/source run/contract hash、模型配置 hash、实验与验收日志保存于 ignored `.eve/evolution/`，目录 0700、宿主文件 0600。状态写入 fsync/rename，跨进程锁保护 publication CAS；崩溃遗留 `publish.lock` 时保守拒绝，需用户确认无写者后处理，不自动偷锁。active 指针在每轮开始读取一次，普通发现永不扫描未发布候选。`load_skill` 通过宿主返回已验证的发布字节，文件工具不能读写 registry。可信用户若直接修改私有状态属于本机信任边界外，不是防 root/OS 攻击的沙箱。
+
+`npm run verify:evolution` 会调用现有真实模型并产生费用：故意不完善的手工 baseline → 真实失败 source → 真实生成 → 四组隐藏边界案例对照 → 晋级 → 独立进程成功加载新 hash → 回滚及独立进程加载旧 hash → 拒绝无测试候选且 active 不变。最多 56 次模型请求（进化配置 ceiling 41，外加三个 5-step runs），总体超时默认 10 分钟，可用 `EVE_EVOLUTION_VERIFY_TIMEOUT_MS` 调到最多 30 分钟。报告 `.eve/runs/evolution-verification.json` 和私有实验账本保留，即使失败也不修改断言。每次脚本创建新的隔离演示谱系；生产谱系不会被重置。
 
 ## Agent Loop
 
@@ -202,7 +262,7 @@ npm run verify:live
 
 ## 边界
 
-这是单用户、可信本地工作区的 PoC，尚无自动技能生成、评测晋级、自我修改或模型训练；后续进化设计见 [技术方案](docs/eve-agent-technical-proposal.md)。
+这是单用户、可信本地工作区的 PoC，支持经过显式启用和局部对照验收的技能生成与晋级；不训练模型。背景设计见 [技术方案](docs/eve-agent-technical-proposal.md)。
 
 - 不执行 shell、安装依赖、访问任意网络工具，文件工具仅可访问 workspace。
 - 阻止 `..`、绝对路径、符号链接，以及 `.git`、`.eve`、`.env*`、`*.local.json` 等受保护路径。
@@ -223,6 +283,10 @@ src/agent.mjs               模型协议、执行循环、预算与事件
 src/tui.mjs                 终端界面与会话选择
 src/sessions.mjs            私有账本、锁、原子保存、边界恢复与任务验收编排
 src/contracts.mjs           声明式契约加载、路径检查与独立读回验收
+src/registry.mjs            不可变技能对象、私有状态、CAS 发布和回滚
+src/evolution.mjs           无工具生成器、冻结 suite、独立对照评测
+scripts/verify-evolution.mjs 真实模型进化、独立进程加载和回滚验证
+test/evolution.test.mjs     进化、安全边界和发布状态测试
 skills/workspace-report/    示例技能
 scripts/verify-live.mjs      随机标记的真实模型验证
 test/core.test.mjs           原有 10 项核心与回归测试

@@ -5,15 +5,17 @@ import { loadConfig, redactConfig, redact, DEFAULTS, setLocalConfig } from '../s
 import { discoverSkills } from '../src/skills.mjs';
 import { runSession, listSessions } from '../src/sessions.mjs';
 import { startTui } from '../src/tui.mjs';
+import { capabilities, importBaseline, promote, rollback } from '../src/registry.mjs';
+import { evolve, autoEvolve, freezeSuite } from '../src/evolution.mjs';
 
-const help = `eve — local workspace agent PoC\n\n  npm start                              交互 TUI\n  npm run eve -- run --prompt "任务"      单次运行\n  npm run eve -- run --prompt "任务" --json\n  npm run eve -- sessions                持久会话列表\n  npm run eve -- run --session ID --contract FILE --prompt \"任务\"\n  npm run eve -- skills                  技能列表\n  npm run eve -- config show             查看脱敏配置\n  npm run eve -- config init             创建无密钥本地配置\n  npm run eve -- config set model NAME   设置本地配置\n\n全局选项：--cwd DIR  --model NAME  --base-url URL\n密钥仅通过 EVE_API_KEY 或 .eve/config.local.json 提供。\n`;
+const help = `eve — local workspace agent PoC\n\n  npm start                              交互 TUI\n  npm run eve -- run --prompt "任务"      单次运行\n  npm run eve -- run --prompt "任务" --json\n  npm run eve -- sessions                持久会话列表\n  npm run eve -- run --session ID --contract FILE --prompt \"任务\"\n  npm run eve -- skills                  技能列表\n  npm run eve -- capabilities            发布能力与候选状态\n  npm run eve -- evolve import --file skills/NAME/SKILL.md\n  npm run eve -- evolve --session ID --run RUNID --skill NAME --suite FILE --max-requests 45\n  npm run eve -- evolve promote ID        发布已通过评测的候选\n  npm run eve -- evolve rollback NAME     撤回版本，下一任务生效\n  run --auto-evolve --skill NAME --suite FILE --max-requests N（需要 --contract）\n  npm run eve -- config show             查看脱敏配置\n  npm run eve -- config init             创建无密钥本地配置\n  npm run eve -- config set model NAME   设置本地配置\n\n全局选项：--cwd DIR  --model NAME  --base-url URL\n密钥仅通过 EVE_API_KEY 或 .eve/config.local.json 提供。\n`;
 function parse(argv) {
   const positional = [], options = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (!arg.startsWith('--')) { positional.push(arg); continue; }
-    if (['--json', '--help'].includes(arg)) { options[arg.slice(2)] = true; continue; }
-    if (!['--cwd', '--model', '--base-url', '--prompt', '--session', '--contract'].includes(arg)) throw new Error('未知命令行选项');
+    if (['--json', '--help', '--auto-evolve', '--no-promote'].includes(arg)) { options[arg.slice(2)] = true; continue; }
+    if (!['--cwd', '--model', '--base-url', '--prompt', '--session', '--contract', '--run', '--skill', '--suite', '--correction', '--max-requests', '--evolution-timeout-ms', '--file'].includes(arg)) throw new Error('未知命令行选项');
     if (!argv[i+1] || argv[i+1].startsWith('--')) throw new Error(`${arg} 缺少值`);
     options[arg.slice(2)] = argv[++i];
   }
@@ -42,15 +44,43 @@ try {
     print({ skills: [...d.skills.values()].map(({ name, description, hash }) => ({ name, description, hash })), warnings: d.warnings });
   } else if (command === 'sessions') {
     print(await listSessions(cwd));
+  } else if (command === 'capabilities') {
+    print(await capabilities(cwd));
+  } else if (command === 'evolve') {
+    if (p[1] === 'import') {
+      if (!o.file) throw new Error('evolve import 需要 --file SKILL.md（trusted user baseline）');
+      print(await importBaseline(cwd, o.file));
+    } else if (p[1] === 'promote') print(await promote(cwd, p[2]));
+    else if (p[1] === 'rollback') print(await rollback(cwd, p[2]));
+    else if (p[1]) throw new Error('未知 evolve 子命令');
+    else {
+      const r = await evolve({ cwd, config, sessionId: o.session, runId: o.run, skill: o.skill, suiteFile: o.suite, correction: o.correction, maxRequests: Number(o['max-requests']), timeoutMs: o['evolution-timeout-ms'] ? Number(o['evolution-timeout-ms']) : undefined, autoPromote: !o['no-promote'] });
+      const { evaluation, ...summary } = r;
+      print({ ...summary, evaluation: { status: evaluation.status, cases: evaluation.cases.map(c => ({ id: c.id, baseline: c.baseline.passed, candidate: c.candidate.passed })), limitation: evaluation.limitation } });
+      if (!['promoted', 'evaluated'].includes(r.status)) process.exitCode = 1;
+    }
   } else if (command === 'run') {
+    let frozenSuite;
+    if (o['auto-evolve']) {
+      if (!o.contract || !o.skill || !o.suite || !Number.isInteger(Number(o['max-requests'])) || Number(o['max-requests']) < 1 || Number(o['max-requests']) > 100) throw new Error('--auto-evolve 需要 --contract --skill --suite --max-requests 1–100；最多一个候选，不重放任务');
+      frozenSuite = await freezeSuite(cwd, o.suite);
+      const { suite } = frozenSuite;
+      if (1 + 2 * suite.cases.length * suite.budget.maxSteps > Number(o['max-requests'])) throw new Error('auto-evolve 请求预算不足');
+    }
     if (!o.prompt) throw new Error('run 需要 --prompt');
     const controller = new AbortController();
     const abort = () => controller.abort(); process.on('SIGINT', abort);
     try {
       const r = await runSession({ cwd, config, prompt: o.prompt, sessionId: o.session, contractFile: o.contract, signal: controller.signal,
         onEvent: e => { if (!o.json && ['model_start', 'tool_start', 'tool_end'].includes(e.type)) process.stderr.write(redact(`[${e.type}] ${e.name || `step ${e.step}`}${e.ok === false ? ' failed' : ''}\n`, config)); } });
+      if (o['auto-evolve']) {
+        try {
+          r.evolution = await autoEvolve({ result: r, cwd, config, frozenSuite, skill: o.skill, suiteFile: o.suite, correction: o.correction, maxRequests: Number(o['max-requests']), timeoutMs: o['evolution-timeout-ms'] ? Number(o['evolution-timeout-ms']) : undefined, signal: controller.signal });
+          if (r.evolution.evaluation) r.evolution = { status: r.evolution.status, experimentId: r.evolution.experimentId, candidate: r.evolution.candidate, evaluationHash: r.evolution.evaluationHash, nextTaskOnly: true };
+        } catch (e) { r.evolution = { status: 'failed', error: redact(e.message, config), nextTaskOnly: true }; }
+      }
       const { messages, ...output } = r;
-      print(o.json ? output : `session: ${r.sessionId} · ${r.status} · acceptance: ${r.verification.status}\n${r.status === 'completed' ? r.final : r.error?.message}`);
+      print(o.json ? output : `session: ${r.sessionId} · ${r.status} · acceptance: ${r.verification.status}\n${r.status === 'completed' ? r.final : r.error?.message}${r.evolution ? `\nevolution: ${r.evolution.status} · next task only` : ''}`);
       if (r.status !== 'completed') process.exitCode = 1;
     } finally { process.removeListener('SIGINT', abort); }
   } else if (command === 'tui') await startTui({ cwd, config });

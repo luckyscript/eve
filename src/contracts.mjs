@@ -8,11 +8,12 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const object = x => x && typeof x === 'object' && !Array.isArray(x);
 export function validateContract(input) {
   if (!object(input) || input.version !== 1 || Object.keys(input).some(k => !['version', 'assertions'].includes(k)) || !Array.isArray(input.assertions) || !input.assertions.length || input.assertions.length > 100) throw new Error('验收契约需要 version:1 和 1–100 个 assertions');
-  const fields = { file_exists: [], json_equals: ['field', 'value'], text_contains: ['text'], write_readback: [] };
+  const fields = { file_exists: [], json_equals: ['field', 'value'], text_contains: ['text'], text_equals: ['text'], sha256_equals: ['sha256'], write_readback: [] };
   for (const a of input.assertions) {
     if (!object(a) || !Object.hasOwn(fields, a.type) || typeof a.path !== 'string' || !a.path || Object.keys(a).some(k => !['type', 'path', ...fields[a.type]].includes(k))) throw new Error('验收 assertion 类型或字段无效');
     if (a.type === 'json_equals' && (!Array.isArray(a.field) || !a.field.every(k => typeof k === 'string') || !Object.hasOwn(a, 'value'))) throw new Error('json_equals 需要字符串数组 field 和 JSON value');
-    if (a.type === 'text_contains' && typeof a.text !== 'string') throw new Error('text_contains 需要 text');
+    if (['text_contains', 'text_equals'].includes(a.type) && typeof a.text !== 'string') throw new Error('text assertion 需要 text');
+    if (a.type === 'sha256_equals' && !/^[a-f0-9]{64}$/.test(a.sha256 || '')) throw new Error('sha256_equals 需要 SHA-256');
   }
   return structuredClone(input);
 }
@@ -53,6 +54,8 @@ export async function verifyContract(cwd, input, { tools = [] } = {}) {
         record.sha256 = hash(bytes);
         const text = bytes.toString('utf8');
         if (a.type === 'text_contains') record.passed = text.includes(a.text);
+        if (a.type === 'text_equals') record.passed = text === a.text;
+        if (a.type === 'sha256_equals') record.passed = record.sha256 === a.sha256;
         if (a.type === 'json_equals') {
           let value = JSON.parse(text);
           for (const key of a.field) value = value != null && Object.hasOwn(Object(value), key) ? value[key] : undefined;

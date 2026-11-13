@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { loadSkill } from './skills.mjs';
 
 const tool = (name, description, properties, required = []) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required, additionalProperties: false } } });
@@ -42,7 +43,7 @@ export async function safePath(root, relative, { createParents = false } = {}) {
       if (e.code !== 'ENOENT') throw e;
       if (i < parts.length - 1) {
         if (!createParents) throw e;
-        await fs.mkdir(current);
+        await fs.mkdir(current, { mode: 0o700 });
       }
     }
   }
@@ -58,8 +59,15 @@ export async function createTools(cwd, discovered, config) {
     if (name === 'load_skill') {
       const s = discovered.skills.get(args.name);
       if (!s) throw new Error('未发现该技能');
-      if (path.relative(root, s.file).split(path.sep).includes('.eve')) throw new Error('禁止访问受保护配置路径');
+      if (!s.published && path.relative(root, s.file).split(path.sep).includes('.eve')) throw new Error('禁止访问受保护配置路径');
       return await loadSkill(s);
+    }
+    if (name === 'write_file') {
+      checkParts(args.path);
+      const target = path.resolve(root, args.path);
+      const roots = (config.skillsDirs || []).map(d => path.resolve(root, d.replace(/^~(?=\/)/, os.homedir())));
+      for (const s of discovered.skills.values()) if (s.root) roots.push(s.root);
+      if (path.basename(target) === 'SKILL.md' || roots.some(dir => target === dir || target.startsWith(dir + path.sep))) throw new Error('禁止直接写入技能路径；请由用户维护或经过独立评测发布');
     }
     const target = await safePath(root, args.path ?? '.', { createParents: name === 'write_file' });
     signal?.throwIfAborted();
@@ -78,7 +86,7 @@ export async function createTools(cwd, discovered, config) {
     if (name === 'write_file') {
       if (!args.path || target === root) throw new Error('写入需要文件路径');
       if (Buffer.byteLength(args.content) > 65536) throw new Error('写入超过 64 KiB');
-      await fs.writeFile(target, args.content, { encoding: 'utf8', signal });
+      await fs.writeFile(target, args.content, { encoding: 'utf8', signal, mode: 0o600 });
       return { path: args.path, bytes: Buffer.byteLength(args.content), written: true };
     }
     throw new Error('未知工具');

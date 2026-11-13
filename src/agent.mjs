@@ -29,12 +29,12 @@ export function withAbort(promise, signal) {
     Promise.resolve(promise).then(value => { signal.removeEventListener('abort', aborted); resolve(value); }, error => { signal.removeEventListener('abort', aborted); reject(error); });
   });
 }
-export async function chatCompletion(config, messages, signal, fetchImpl = fetch) {
+export async function chatCompletion(config, messages, signal, fetchImpl = fetch, { tools = true } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
   const response = await fetchImpl(config.baseUrl + '/chat/completions', {
     method: 'POST', headers, signal,
-    body: JSON.stringify({ model: config.model, messages, tools: TOOL_SCHEMAS, tool_choice: 'auto', stream: false, temperature: config.temperature, max_tokens: config.maxOutputTokens }),
+    body: JSON.stringify({ model: config.model, messages, ...(tools ? { tools: TOOL_SCHEMAS, tool_choice: 'auto' } : {}), stream: false, temperature: config.temperature, max_tokens: config.maxOutputTokens }),
   });
   if (!response.ok) {
     await response.body?.cancel();
@@ -75,7 +75,11 @@ export async function runAgent({ cwd = process.cwd(), config, prompt, history = 
     const execute = await withAbort(createTools(cwd, discovered, config), combined);
     await emit({ type: 'capability_snapshot' }, { skills: [...discovered.skills.values()].map(({ name, hash }) => ({ name, hash })) });
     await emit({ type: 'skills_discovered', skills: [...discovered.skills.keys()], warnings: discovered.warnings });
-    messages = [{ role: 'system', content: SYSTEM + skillsCatalog(discovered.skills) }, ...history.filter(m => m.role !== 'system'), { role: 'user', content: prompt }];
+    // A prior run's tool protocol is retained, but its loaded skill bytes are expired.
+    // Otherwise a resumed session can keep following a superseded published version.
+    const historicalLoads = new Set(history.flatMap(m => (m.tool_calls || []).filter(c => c.function?.name === 'load_skill').map(c => c.id)));
+    const freshHistory = history.filter(m => m.role !== 'system').map(m => m.role === 'tool' && historicalLoads.has(m.tool_call_id) ? { ...m, content: JSON.stringify({ ok: false, expired: true, error: 'Previous run skill load expired. Call load_skill again for this run snapshot.' }) } : m);
+    messages = [{ role: 'system', content: SYSTEM + skillsCatalog(discovered.skills) }, ...freshHistory, { role: 'user', content: prompt }];
     await emit({ type: 'context_ready' });
     if (messages.length > 100 || JSON.stringify(messages).length > 200000) throw new AgentError('CONTEXT', '会话超出 PoC 上下文上限，请 /new 开始新会话');
     for (let step = 1; step <= config.maxSteps; step++) {

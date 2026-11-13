@@ -10,7 +10,8 @@
     "start": "node bin/eve.mjs tui",
     "eve": "node bin/eve.mjs",
     "test": "node --test test/*.test.mjs",
-    "check": "node --check bin/eve.mjs && node --check src/config.mjs && node --check src/skills.mjs && node --check src/tools.mjs && node --check src/agent.mjs && node --check src/sessions.mjs && node --check src/contracts.mjs && node --check src/tui.mjs && node --check scripts/verify-live.mjs && node --check scripts/verify-sessions-live.mjs",
+    "check": "node --check bin/eve.mjs && node --check src/config.mjs && node --check src/skills.mjs && node --check src/tools.mjs && node --check src/agent.mjs && node --check src/sessions.mjs && node --check src/contracts.mjs && node --check src/tui.mjs && node --check scripts/verify-live.mjs && node --check scripts/verify-sessions-live.mjs && node --check src/registry.mjs && node --check src/evolution.mjs && node --check scripts/verify-evolution.mjs",
+    "verify:evolution": "node scripts/verify-evolution.mjs",
     "verify:live": "node scripts/verify-live.mjs",
     "verify:sessions-live": "node scripts/verify-sessions-live.mjs",
     "verify:tui": "python3 scripts/verify-tui.py"

@@ -7,14 +7,16 @@ export const DEFAULTS = Object.freeze({
   model: 'macmini-magpie/bailian-token-plan/qwen3.8-max',
   apiKey: '', maxSteps: 12, maxToolCalls: 24, timeoutMs: 90000,
   maxOutputTokens: 4096, maxToolChars: 16000, temperature: 0,
+  contextMaxChars: 100000, contextRecentGroups: 2, contextSummaryChars: 4000,
   skillsDirs: ['skills'], userSkills: true,
 });
 const ENV_FIELDS = {
+  EVE_CONTEXT_MAX_CHARS: 'contextMaxChars',
   EVE_BASE_URL: 'baseUrl', EVE_MODEL: 'model', EVE_API_KEY: 'apiKey',
   EVE_MAX_STEPS: 'maxSteps', EVE_MAX_TOOL_CALLS: 'maxToolCalls',
   EVE_TIMEOUT_MS: 'timeoutMs', EVE_MAX_OUTPUT_TOKENS: 'maxOutputTokens',
 };
-const NUMBERS = new Set(['maxSteps', 'maxToolCalls', 'timeoutMs', 'maxOutputTokens', 'maxToolChars', 'temperature']);
+const NUMBERS = new Set(['maxSteps', 'maxToolCalls', 'timeoutMs', 'maxOutputTokens', 'maxToolChars', 'temperature', 'contextMaxChars', 'contextRecentGroups', 'contextSummaryChars']);
 export function validateConfig(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('配置必须是 JSON 对象');
   for (const key of Object.keys(input)) if (!(key in DEFAULTS)) throw new Error(`未知配置项：${key}`);
@@ -30,6 +32,7 @@ export function validateConfig(input) {
     if (key !== 'temperature' && !Number.isInteger(c[key])) throw new Error(`${key} 必须是整数`);
   }
   if (c.temperature > 2 || c.maxSteps > 100 || c.maxToolCalls > 200 || c.timeoutMs > 600000 || c.maxOutputTokens > 32768 || c.maxToolChars > 131072) throw new Error('配置超过 PoC 允许的预算范围');
+  if (c.contextMaxChars < 4096 || c.contextMaxChars > 200000 || c.contextRecentGroups > 20 || c.contextSummaryChars > 16000) throw new Error('context 预算范围无效（maxChars 4096–200000，recentGroups 1–20，summaryChars 1–16000）');
   if (!Array.isArray(c.skillsDirs) || !c.skillsDirs.every(x => typeof x === 'string' && x.length > 0)) throw new Error('skillsDirs 必须是路径数组');
   if (typeof c.userSkills !== 'boolean') throw new Error('userSkills 必须是布尔值');
   return c;

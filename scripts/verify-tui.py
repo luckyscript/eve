@@ -54,10 +54,13 @@ def command(text, expected):
 try:
     checks['startsInRealTTY'] = expect('eve ›')
     checks['helpCommand'] = command('/help', '工具仅限 workspace')
+    checks['toolsCommand'] = command('/tools', 'edit_file')
+    checks['statusCommand'] = command('/status', 'contextMaxChars')
     checks['skillsCommand'] = command('/skills', 'workspace-report')
     checks['redactedConfigCommand'] = command('/config', 'apiKey')
     checks['sessionsCommand'] = command('/sessions', session_id)
     checks['resumeCommand'] = command('/resume ' + session_id, '已恢复会话 ' + session_id)
+    checks['compactCommand'] = command('/compact', '上下文已压缩')
     checks['newConversationCommand'] = command('/new', '已开始新会话')
     os.write(fd, b'/exit\n')
     deadline = time.monotonic() + 5

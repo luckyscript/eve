@@ -1,14 +1,15 @@
 #!/usr/bin/env node
+import { TOOL_SCHEMAS } from '../src/tools.mjs';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { loadConfig, redactConfig, redact, DEFAULTS, setLocalConfig } from '../src/config.mjs';
 import { discoverSkills } from '../src/skills.mjs';
-import { runSession, listSessions } from '../src/sessions.mjs';
+import { runSession, listSessions, compactSession, sessionStatus } from '../src/sessions.mjs';
 import { startTui } from '../src/tui.mjs';
 import { capabilities, importBaseline, promote, rollback } from '../src/registry.mjs';
 import { evolve, autoEvolve, freezeSuite } from '../src/evolution.mjs';
 
-const help = `eve — local workspace agent PoC\n\n  npm start                              交互 TUI\n  npm run eve -- run --prompt "任务"      单次运行\n  npm run eve -- run --prompt "任务" --json\n  npm run eve -- sessions                持久会话列表\n  npm run eve -- run --session ID --contract FILE --prompt \"任务\"\n  npm run eve -- skills                  技能列表\n  npm run eve -- capabilities            发布能力与候选状态\n  npm run eve -- evolve import --file skills/NAME/SKILL.md\n  npm run eve -- evolve --session ID --run RUNID --skill NAME --suite FILE --max-requests 45\n  npm run eve -- evolve promote ID        发布已通过评测的候选\n  npm run eve -- evolve rollback NAME     撤回版本，下一任务生效\n  run --auto-evolve --skill NAME --suite FILE --max-requests N（需要 --contract）\n  npm run eve -- config show             查看脱敏配置\n  npm run eve -- config init             创建无密钥本地配置\n  npm run eve -- config set model NAME   设置本地配置\n\n全局选项：--cwd DIR  --model NAME  --base-url URL\n密钥仅通过 EVE_API_KEY 或 .eve/config.local.json 提供。\n`;
+const help = `eve — local workspace agent PoC\n\n  npm start                              交互 TUI\n  npm run eve -- run --prompt "任务"      单次运行\n  npm run eve -- run --prompt "任务" --json\n  npm run eve -- sessions                持久会话列表\n  npm run eve -- run --session ID --contract FILE --prompt \"任务\"\n  npm run eve -- tools                   工具能力（无 shell/exec）\n  npm run eve -- status --session ID      上下文预算和摘要状态\n  npm run eve -- compact --session ID     手动压缩，保留原始会话\n  npm run eve -- skills                  技能列表\n  npm run eve -- capabilities            发布能力与候选状态\n  npm run eve -- evolve import --file skills/NAME/SKILL.md\n  npm run eve -- evolve --session ID --run RUNID --skill NAME --suite FILE --max-requests 45\n  npm run eve -- evolve promote ID        发布已通过评测的候选\n  npm run eve -- evolve rollback NAME     撤回版本，下一任务生效\n  run --auto-evolve --skill NAME --suite FILE --max-requests N（需要 --contract）\n  npm run eve -- config show             查看脱敏配置\n  npm run eve -- config init             创建无密钥本地配置\n  npm run eve -- config set model NAME   设置本地配置\n\n全局选项：--cwd DIR  --model NAME  --base-url URL\n密钥仅通过 EVE_API_KEY 或 .eve/config.local.json 提供。\n`;
 function parse(argv) {
   const positional = [], options = {};
   for (let i = 0; i < argv.length; i++) {
@@ -39,6 +40,16 @@ try {
       await fs.writeFile(path.join(dir, 'config.local.json'), JSON.stringify(safe, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
       print('已创建 .eve/config.local.json（不含密钥）。');
     } else throw new Error('未知 config 子命令');
+  } else if (command === 'tools') {
+    print(TOOL_SCHEMAS);
+  } else if (command === 'status') {
+    if (!o.session) throw new Error('status 需要 --session ID');
+    print(await sessionStatus(cwd, o.session, config));
+  } else if (command === 'compact') {
+    if (!o.session) throw new Error('compact 需要 --session ID');
+    const { messages, context, ...result } = await compactSession({ cwd, config, sessionId: o.session });
+    print({ ...result, context: await sessionStatus(cwd, o.session, config) });
+    if (result.status !== 'completed') process.exitCode = 1;
   } else if (command === 'skills') {
     const d = await discoverSkills(cwd, config);
     print({ skills: [...d.skills.values()].map(({ name, description, hash }) => ({ name, description, hash })), warnings: d.warnings });
@@ -79,7 +90,8 @@ try {
           if (r.evolution.evaluation) r.evolution = { status: r.evolution.status, experimentId: r.evolution.experimentId, candidate: r.evolution.candidate, evaluationHash: r.evolution.evaluationHash, nextTaskOnly: true };
         } catch (e) { r.evolution = { status: 'failed', error: redact(e.message, config), nextTaskOnly: true }; }
       }
-      const { messages, ...output } = r;
+      const { messages, context, ...output } = r;
+      output.context = await sessionStatus(cwd, r.sessionId, config);
       print(o.json ? output : `session: ${r.sessionId} · ${r.status} · acceptance: ${r.verification.status}\n${r.status === 'completed' ? r.final : r.error?.message}${r.evolution ? `\nevolution: ${r.evolution.status} · next task only` : ''}`);
       if (r.status !== 'completed') process.exitCode = 1;
     } finally { process.removeListener('SIGINT', abort); }

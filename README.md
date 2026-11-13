@@ -1,6 +1,6 @@
 # eve · Agent PoC
 
-一个可直接运行的终端 Agent 原型：**Agent Loop、持久任务会话、独立产物验收、skills 按需注入、交互 TUI、分层配置**。
+一个可直接运行的终端 Agent 原型：**Agent Loop、长上下文持久会话、文件搜索与精确编辑、独立产物验收、skills 按需注入、交互 TUI、分层配置**。
 
 使用 Node.js 22+ 的原生模块，无第三方运行依赖，无需 `npm install`。本版使用自行实现的最小 OpenAI-compatible 工具循环，**未接入 Pi 或 DeepSeek Harness**；先固定 eve 的工具/技能/验证接口，后续可以替换运行时。
 
@@ -48,6 +48,9 @@ TUI 为滚动式终端界面，使用 readline 与 ANSI 状态显示，需要真
 | 命令 | 功能 |
 |---|---|
 | `/help` | 查看帮助 |
+| `/tools` | 列出完整工具 schema 对应能力（无 shell/exec） |
+| `/compact` | 手动压缩当前会话，保留原始记录 |
+| `/status` | 显示 session、字符预算及摘要来源数量 |
 | `/skills` | 发现并列出可用技能 |
 | `/config` | 显示脱敏配置 |
 | `/config set maxSteps 8` | 保存本地配置，重置会话 |
@@ -89,7 +92,7 @@ node bin/eve.mjs run --session report-task --prompt "检查上轮输出并继续
 - `file_exists` 要求普通文件存在。
 - `json_equals` 用字符串数组 `field` 逐层选择 JSON 自有字段，空数组表示整个文档；严格比较 JSON 值，缺失字段失败。
 - `text_contains` 要求 UTF-8 文本包含指定字符串。
-- `write_readback` 要求**本轮**有成功的 `write_file`，宿主独立读回文件，将实际字节 SHA-256 与本轮最后一次同路径成功写入的内容比较；无需相信模型的“已经验证”。
+- `write_readback` 要求**本轮**有成功的 `write_file` 或 `edit_file`，宿主独立读回文件，将实际字节 SHA-256 与本轮最后一次同路径成功写入的内容比较；无需相信模型的“已经验证”。
 
 内容断言限 256 KiB；每份文件契约限 256 KiB、1–100 个 assertions。验证从真实文件读取，结果不输出文件正文或 expected/actual 值，记录判定和内容哈希。JSON 输出分别包含 `modelStatus`、`verification.status` 和最终 `status`。有契约时只有模型 `completed` 且验收 `passed` 才成功；口头完成而产物错误返回 `failed` / `ACCEPTANCE_FAILED`、退出码 1。无契约时 `not_requested` 只表示未做独立验收，保持原有完成语义；模型失败时验收为 `not_checked`。`run_end` 是原有模型循环结束事件，`acceptance_end` 给出宿主最终判定。
 
@@ -149,7 +152,7 @@ suite 支持 1–12 个 cases，每个 case 独立 input files、prompt、contra
 
 MVP 发布策略：候选全 cases 通过、baseline 至少一例契约失败，所有运行必须正常完成并实际加载对应技能。baseline 正确 cases 因而零退步；缺加载、超时、中断等不确定结果均不发布。**这些只是小样本局部证据，不是一般能力提升保证**。不允许候选静态解析或模拟输出来替代真实输出验收。隐藏案例在执行阶段会供评测模型完成其任务，但不会反馈到生成器；本版没有把逐题日志迭代发送给生成器的搜索循环。
 
-进化付费必须显式提供 `--max-requests N`（1–100），开始前校验最坏请求数 `1 + 2 × cases × maxSteps` 不超预算，生成调用计 1 次；输出 token 请求上限为该请求数乘 `maxOutputTokens`。每轮上下文仍有既有 200k 字符硬上限，模型 usage 只作实测统计，不估算货币费用。suite 默认预算为 6 steps/12 tools/2048 output tokens/60s；最大 12/24/4096/120s。`--evolution-timeout-ms` 控制整个实验，默认 600000，最高 1800000。持久谱系限制 `maxCandidates` 为 1–3，首次实验锁定上限，后续不能提高；失败生成也消耗一次机会，不能反复查询同一候选。不同谱系预算独立。
+进化付费必须显式提供 `--max-requests N`（1–100），开始前校验最坏请求数 `1 + 2 × cases × maxSteps` 不超预算，生成调用计 1 次；输出 token 请求上限为该请求数乘 `maxOutputTokens`。每轮上下文使用下述可配置字符预算，摘要请求也计入 case 的 maxSteps，模型 usage 只作实测统计，不估算货币费用。suite 默认预算为 6 steps/12 tools/2048 output tokens/60s；最大 12/24/4096/120s。`--evolution-timeout-ms` 控制整个实验，默认 600000，最高 1800000。持久谱系限制 `maxCandidates` 为 1–3，首次实验锁定上限，后续不能提高；失败生成也消耗一次机会，不能反复查询同一候选。不同谱系预算独立。
 
 一次命令启用日常自动进化：
 
@@ -177,6 +180,8 @@ registry 的 content-addressed skill objects、candidate/evaluated/active/reject
 - `list_files`：列出 workspace 相对目录，最多 200 项。
 - `read_file`：读取普通 UTF-8 文件，最大文件 256 KiB，返回内容按配置截断并标记。
 - `write_file`：创建或替换 workspace 内的文件，最大 64 KiB；允许创建父目录。
+- `search_files`：递归 UTF-8 literal 搜索（支持跨行，不接受 regex），`query` 必填，`path` 默认 `.`，`path_filter` 为可选路径子串；最多遍历 2000 项、扫描 500 文件/2 MiB、返回 100 命中且正文不超过 `min(maxToolChars,16000)` 字符。单文件最多 256 KiB，跳过二进制/非法 UTF-8、受保护目录、symlink 与 node_modules；返回扫描计数、limits 和 truncated。
+- `edit_file`：`path`、`old_text`、`new_text` 均为字符串；只替换唯一 exact 命中（含重叠计数），空 old_text、0/多命中拒绝且不写入。不创建文件或父目录；原文件、参数和结果均限 64 KiB，严格 UTF-8，沿用技能根目录与 SKILL.md 写保护。成功返回完整结果 SHA-256，支持独立 write_readback 验收。
 - `load_skill`：按发现时的名字加载技能正文，结果作为 tool message 注入下一次模型请求。
 
 工具参数必须为已声明 schema 的字符串字段；未知工具、非法 JSON、缺失字段或越界路径以工具错误反馈模型，可继续纠正。工具串行，避免写入与读取顺序竞争。截断的模型响应不执行其中的工具调用。
@@ -207,6 +212,26 @@ frontmatter 是明确限制的子集：单行 `key: value`，必填 `name` 与 `
 
 技能及其描述是受用户信任的本地指令资源；这不是对任意第三方恶意技能的安全隔离。不要加载不可信目录。
 
+## 长上下文与摘要
+
+每次模型请求前，Context Service 按 JSON 序列化字符数预算检查 system、当前任务、摘要、消息和工具 schema。默认 `contextMaxChars=100000`，替换旧的 100 条消息/200k 硬限；字符预算不是 tokenizer 的 token 数。保留最近 `contextRecentGroups` 个完整 assistant 组，另始终保留最后一个完整 assistant/tool 调用组、本轮已加载的 active skill snapshot 和当前用户任务。单个工具 JSON 不截断；必需部分装不下时明确返回 CONTEXT，用户可 `/new` 或显式调整预算。
+
+超预算时产生派生视图：旧用户消息（含纠正）逐字保留为 `userOriginals`，旧轨迹提供工具名与 run/message index/SHA-256 来源。每轮最多一次无工具模型摘要尝试，输入也受相同字符预算约束；优先摘要旧轨迹中的事实，失败/输出越界/请求预算不足时透明回退到确定性轨迹。摘要使用现有模型推理，不训练模型。摘要尝试计入 maxSteps、maxOutputTokens、usage 和 timeoutMs，预留至少一次普通模型请求；小任务不额外调用摘要模型。模型摘要仍可能遗漏非用户工具内容，确定性回退也不保证记住所有文件事实；不会静默删用户原文，累积原文放不下时失败。
+
+历史 load_skill 结果在续聊前过期；它们不参与模型摘要，能力 hash 改变还会丢弃旧模型摘要，避免撤回技能正文进入长期摘要。本轮 system/技能目录重新构造，验收 contract 完整保存在宿主账本，模型只见 assertion 类型与目标路径，expected 值不会经 system 泄露。
+
+原始 runs/messages/responses/tools 保留在私有 sessions 账本；摘要记录带完整 sources 与 sourceDigest，独立 `context_summary` 事件持久化。自动压缩保存在 run.context；手动压缩保存 session.context overlay/contextEvents，不改写既有 runs。中断时拼接摘要检查点后的原始消息，再补齐 unknown tool 结果。重启后继续使用派生视图，不重放工具。
+
+```bash
+node bin/eve.mjs tools
+node bin/eve.mjs status --session TASK --json
+node bin/eve.mjs compact --session TASK --json
+node bin/eve.mjs run --session TASK --prompt "继续此前任务" --json
+npm run verify:agent
+```
+
+`verify:agent` 在隔离 workspace 中真实验证 search→edit→readback+契约、读取随机事实→积累超过小预算的工具历史→独立进程压缩→另一个进程回忆并通过契约。回忆答案既不在原始用户提示也不在验收 system 中，原文件在续聊前删除，必须由模型摘要携带事实。每任务 240000 ms、最多 8 请求/12 工具、每请求 1024 输出 tokens，最多一次摘要；忽略追踪的 `.eve/runs/agent-verification.json` 保存脱敏报告，私有原始账本保留。这是固定任务的局部证据，不代表所有长任务都能无损压缩。
+
 ## 配置
 
 覆盖顺序，从低到高：
@@ -221,7 +246,7 @@ frontmatter 是明确限制的子集：单行 `key: value`，必填 `name` 与 `
 
 workspace 由 `--cwd DIR` 指定，默认当前目录。配置中的相对 skills 路径按 workspace 解析。
 
-可参考 [.eve/config.example.json](.eve/config.example.json)。常用环境变量：`EVE_BASE_URL`、`EVE_MODEL`、`EVE_API_KEY`、`EVE_MAX_STEPS`、`EVE_MAX_TOOL_CALLS`、`EVE_TIMEOUT_MS`、`EVE_MAX_OUTPUT_TOKENS`。
+可参考 [.eve/config.example.json](.eve/config.example.json)。常用环境变量：`EVE_BASE_URL`、`EVE_MODEL`、`EVE_API_KEY`、`EVE_MAX_STEPS`、`EVE_MAX_TOOL_CALLS`、`EVE_TIMEOUT_MS`、`EVE_MAX_OUTPUT_TOKENS`、`EVE_CONTEXT_MAX_CHARS`。
 
 | 配置 | 默认值 | 含义 |
 |---|---:|---|
@@ -229,6 +254,9 @@ workspace 由 `--cwd DIR` 指定，默认当前目录。配置中的相对 skill
 | `maxToolCalls` | 24 | 每轮任务最大工具尝试数 |
 | `timeoutMs` | 90000 | 每轮总超时；本地测试配置可提高 |
 | `maxOutputTokens` | 4096 | 每次模型响应输出上限 |
+| `contextMaxChars` | 100000 | 每请求上下文字符预算，4096–200000（含工具 schema） |
+| `contextRecentGroups` | 2 | 保留最近完整 assistant 组，1–20；最后工具组另保留 |
+| `contextSummaryChars` | 4000 | 模型摘要最大字符数，1–16000 |
 | `maxToolChars` | 16000 | 读取文件返回的字符上限 |
 | `temperature` | 0 | 模型温度 |
 | `skillsDirs` | `["skills"]` | 项目技能目录 |
@@ -268,7 +296,7 @@ npm run verify:live
 - 阻止 `..`、绝对路径、符号链接，以及 `.git`、`.eve`、`.env*`、`*.local.json` 等受保护路径。
 - 路径检查不是 OS 沙箱，仍存在恶意并发换路径的 TOCTOU 风险；不要用于不可信多租户或恶意工作区。
 - 用户任务授权写入由模型指令表达，本版没有逐次审批 UI；只在允许模型修改的工作区运行。
-- 支持持久会话和任务边界续聊；不支持进程中间点 exactly-once 恢复、工具自动重放、原子多文件事务、自动补偿或自动上下文压缩。上下文过大时明确报错并要求 `/new`。
+- 支持持久会话和任务边界续聊；不支持进程中间点 exactly-once 恢复、工具自动重放、原子多文件事务或自动补偿。支持有界上下文压缩；必需近组/用户原文超预算时明确报错并要求 `/new`。
 - 模型 API 超时/HTTP 错误明确失败，不将半成品输出标为完成；不自动切换模型。
 - token 统计依赖兼容服务返回的 usage，不估算货币费用。
 
@@ -279,6 +307,7 @@ bin/eve.mjs                 CLI 入口
 src/config.mjs              配置与脱敏
 src/skills.mjs              发现、元数据、按需加载与哈希校验
 src/tools.mjs               工具 schema、参数和路径检查
+src/context.mjs             有界派生视图、完整工具组、来源摘要
 src/agent.mjs               模型协议、执行循环、预算与事件
 src/tui.mjs                 终端界面与会话选择
 src/sessions.mjs            私有账本、锁、原子保存、边界恢复与任务验收编排

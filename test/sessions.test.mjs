@@ -93,7 +93,7 @@ test('CLI: separate processes continue full multi-tool history and independently
   const ledger = await loadSession(cwd, 'cross-process');
   assert.equal(ledger.runs.length, 2); assert.equal(ledger.runs[0].tools.length, 2);
   assert.equal(ledger.runs[0].tools[0].result.result.content, 'private-probe-key');
-  assert.equal(ledger.runs[0].capabilitySnapshot.tools.length, 4);
+  assert.equal(ledger.runs[0].capabilitySnapshot.tools.length, 6);
   const listing = await cliRun(cwd, ['sessions', '--json'], env);
   assert.equal(JSON.parse(listing.stdout)[0].id, 'cross-process'); assert(!listing.stdout.includes('private-probe-key'));
 });

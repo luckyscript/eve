@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { runAgent } from './agent.mjs';
 import { loadContract, validateContract, verifyContract } from './contracts.mjs';
+import { messageHash } from './context.mjs';
 import { TOOL_SCHEMAS } from './tools.mjs';
 
 export function validateSessionId(id) {
@@ -130,7 +131,9 @@ export async function listSessions(cwd) {
 }
 export function sessionHistory(data) {
   const run = data.runs.findLast(r => r.messages.length);
-  const messages = structuredClone(run?.messages || []).filter(m => m.role !== 'system');
+  const context = data.context?.baseRunId === run?.id ? data.context : run?.context;
+  const tail = context && Number.isInteger(context.rawCount) ? (run?.messages || []).slice(context.rawCount) : [];
+  const messages = structuredClone(context ? [...context.view, ...tail] : run?.messages || []).filter(m => m.role !== 'system');
   // Repair protocol in a derived view only; the raw interrupted evidence stays intact.
   const history = [];
   for (let i = 0; i < messages.length; i++) {
@@ -151,11 +154,17 @@ export async function runSession({ cwd = process.cwd(), config, sessionId = newS
   if (contract) await verifyContract(cwd, contract);
   const session = await openSession(cwd, sessionId);
   try {
+    const previous = session.data.runs.findLast(r => r.messages.length);
+    const derived = session.data.context?.baseRunId === previous?.id ? session.data.context : previous?.context;
     const history = sessionHistory(session.data);
+    const tailSources = derived && Number.isInteger(derived.rawCount) ? (previous?.messages || []).slice(derived.rawCount).map((m, i) => ({ runId: previous.id, index: derived.rawCount + i, sha256: messageHash(m) })) : [];
+    const sources = derived ? [...derived.sources, ...tailSources] : (previous?.messages || []).flatMap((m, index) => m.role === 'system' ? [] : [{ runId: previous.id, index, sha256: messageHash(m) }]);
     const run = { id: `r-${randomUUID()}`, startedAt: now(), status: 'running', modelStatus: 'running', prompt: options.prompt, contract, capabilitySnapshot: { runtime: 'eve-native-v1', node: process.version, model: config.model, tools: TOOL_SCHEMAS, skills: [] }, messages: [], responses: [], events: [], tools: [] };
     session.data.runs.push(run); await session.save();
-    const result = await runAgent({ ...options, cwd, config, history, onCheckpoint: async ({ messages, events, event, details }) => {
+    const result = await runAgent({ ...options, cwd, config, history, contract, runId: run.id, contextSummary: derived?.summary, contextSources: sources, previousSkills: previous?.capabilitySnapshot?.skills, onCheckpoint: async ({ messages, events, event, details }) => {
       run.messages = structuredClone(messages); run.events = structuredClone(events);
+      if (event.type === 'context_ready') run.systemMessage = structuredClone(details.system);
+      if (event.type === 'context_summary') { run.summaries ||= []; run.summaries.push(structuredClone(details.summary)); run.context = structuredClone(details.context); }
       if (event.type === 'model_response') run.responses.push(structuredClone(details.answer));
       if (event.type === 'run_end') run.modelStatus = event.status;
       if (event.type === 'capability_snapshot') run.capabilitySnapshot.skills = details.skills;
@@ -172,6 +181,7 @@ export async function runSession({ cwd = process.cwd(), config, sessionId = newS
     run.modelStatus = result.status;
     for (const tool of run.tools) if (tool.status === 'intent') tool.status = 'unknown';
     run.messages = result.messages;
+    if (result.context) run.context = result.context;
     let verification = { status: 'not_requested', assertions: [] };
     if (contract) {
       if (result.status !== 'completed') verification = { status: 'not_checked', assertions: [] };
@@ -186,4 +196,32 @@ export async function runSession({ cwd = process.cwd(), config, sessionId = newS
     await session.save();
     return { ...result, events: [...result.events, acceptanceEvent], status, modelStatus: result.status, verification, sessionId, runId: run.id, ...(error ? { error } : {}) };
   } finally { await session.close(); }
+}
+
+// Maintenance compression persists an overlay, never rewrites a prior run's evidence.
+export async function compactSession({ cwd = process.cwd(), config, sessionId, ...options }) {
+  const session = await openSession(cwd, sessionId, { create: false });
+  try {
+    const last = session.data.runs.findLast(r => r.messages.length);
+    const previous = session.data.context?.baseRunId === last?.id ? session.data.context : last?.context;
+    const result = await runAgent({ ...options, cwd, config, history: sessionHistory(session.data), compactOnly: true,
+      contextSummary: previous?.summary, contextSources: previous?.sources || (last?.messages || []).flatMap((m, index) => m.role === 'system' ? [] : [{ runId: last.id, index, sha256: messageHash(m) }]), previousSkills: last?.capabilitySnapshot?.skills, runId: `compact-${randomUUID()}`,
+      onCheckpoint: async ({ event, details }) => {
+        if (event.type === 'context_summary') {
+          session.data.contextEvents ||= [];
+          session.data.contextEvents.push({ ...event, at: now(), summary: details.summary, baseRunId: last?.id });
+          session.data.context = { ...details.context, rawCount: last?.messages.length || 0, baseRunId: last?.id };
+          await session.save();
+        }
+      } });
+    if (result.status === 'completed') { session.data.context = { ...result.context, rawCount: last?.messages.length || 0, baseRunId: last?.id }; await session.save(); }
+    return { ...result, sessionId };
+  } finally { await session.close(); }
+}
+export async function sessionStatus(cwd, sessionId, config) {
+  let data;
+  try { data = await loadSession(cwd, sessionId); } catch (e) { if (e.code !== 'ENOENT') throw e; return { sessionId, runs: 0, contextMaxChars: config.contextMaxChars, summary: false }; }
+  const run = data.runs.at(-1);
+  const context = data.context?.baseRunId === run?.id ? data.context : run?.context;
+  return { sessionId, runs: data.runs.length, status: run?.status || 'new', contextChars: context?.chars || 0, contextMaxChars: config.contextMaxChars, summary: !!context?.summary, summaryMethod: context?.summary?.method, summarizedMessages: context?.summary?.sources?.length || 0, compactions: context?.compactions || 0 };
 }

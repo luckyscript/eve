@@ -62,8 +62,8 @@ export async function verifyContract(cwd, input, { tools = [] } = {}) {
           record.passed = isDeepStrictEqual(value, a.value);
         }
         if (a.type === 'write_readback') {
-          const write = tools.findLast(t => t.name === 'write_file' && t.status === 'completed' && t.result?.ok && t.arguments?.path === a.path);
-          record.passed = !!write && hash(Buffer.from(write.arguments.content)) === record.sha256;
+          const write = tools.findLast(t => ['write_file', 'edit_file'].includes(t.name) && t.status === 'completed' && t.result?.ok && t.arguments?.path === a.path);
+          record.passed = !!write && (write.name === 'edit_file' ? write.result.result.sha256 : hash(Buffer.from(write.arguments.content))) === record.sha256;
         }
       }
       if (!record.passed) record.reason = 'assertion_mismatch';

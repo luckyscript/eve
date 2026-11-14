@@ -59,3 +59,36 @@ test('bridge recursively redacts secrets even with JSON escapes; tool private da
  const secret='s"e\\cret'; const {cwd,h}=await host(t,async()=>response(secret)); await h.call('workspace',{path:cwd}); await h.call('secret',{value:secret});
  const r=await h.call('run',{prompt:'hello'}); assert.equal(r.final,'[redacted]'); assert(!JSON.stringify(r).includes('messages')); assert(!JSON.stringify(r).includes('rawArguments'));
 });
+
+test('bridge actual APIs cover tools, compression, evolution scores, promote, rollback and one-shot auto evolution',async t=>{
+ let generations=0; const captures=[];
+ const skillText=body=>`---\nname: native-proof\ndescription: Native proof fixture\n---\n${body}\n`;
+ const mock=async (_url,init)=>{
+  const q=JSON.parse(init.body); captures.push(q);
+  if(!q.tools) {generations++; return response(skillText('improved procedure'));}
+  const tools=q.messages.filter(m=>m.role==='tool');
+  let name,args;
+  if(!tools.length) {name='load_skill';args={name:'native-proof'};}
+  else if(tools.length===1) {name='write_file';args={path:'out.txt',content:tools[0].content.includes('improved procedure')?'good':'bad'};}
+  else return response('done');
+  return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:null,tool_calls:[{id:'t'+tools.length,type:'function',function:{name,arguments:JSON.stringify(args)}}]},finish_reason:'stop'}]}));
+ };
+ const {cwd,h}=await host(t,mock);await h.call('workspace',{path:cwd});
+ await h.call('configure',{values:{maxSteps:3,userSkills:false,maxOutputTokens:512}});
+ await fs.mkdir(path.join(cwd,'skills/native-proof'),{recursive:true});const skillFile=path.join(cwd,'skills/native-proof/SKILL.md');await fs.writeFile(skillFile,skillText('old procedure'));
+ const baseline=await h.call('import',{file:skillFile}); assert.equal(baseline.status,'active');
+ const contract={version:1,assertions:[{type:'text_equals',path:'out.txt',text:'good'},{type:'write_readback',path:'out.txt'}]};
+ const contractFile=path.join(cwd,'contract.json');await fs.writeFile(contractFile,JSON.stringify(contract));
+ const suiteFile=path.join(cwd,'suite.json');await fs.writeFile(suiteFile,JSON.stringify({version:1,maxCandidates:3,budget:{maxSteps:3,maxToolCalls:4,maxOutputTokens:512,timeoutMs:10000},cases:[{id:'hidden',prompt:'Use native-proof to write out.txt',files:{'input.txt':'PRIVATE_SUITE_CANARY'},contract}]}));
+ const source=await h.call('run',{prompt:'Use native-proof to write out.txt',contractFile,sessionId:'evolution-source'});assert.equal(source.verification.status,'failed');
+ assert.equal((await h.call('suite',{file:suiteFile})).requestCeiling,7);
+ const args={sessionId:source.sessionId,runId:source.runId,skill:'native-proof',suiteFile,maxRequests:10,autoPromote:false};
+ const evolved=await h.call('evolve',args);assert.equal(evolved.status,'evaluated');assert.equal(evolved.evaluation.cases[0].baseline.passed,false);assert.equal(evolved.evaluation.cases[0].candidate.passed,true);
+ assert(!JSON.stringify(captures.find(q=>!q.tools)).includes('PRIVATE_SUITE_CANARY'));assert(!JSON.stringify(captures.find(q=>!q.tools)).includes('assertions'));
+ assert.equal((await h.call('promote',{id:evolved.candidate.id})).status,'active');
+ assert.equal((await h.call('rollback',{name:'native-proof'})).active,baseline.hash);
+ const auto=await h.call('run',{prompt:'Use native-proof to write out.txt',contractFile,autoEvolve:true,skill:'native-proof',suiteFile,maxRequests:10,autoPromote:false});
+ assert.equal(auto.evolution.status,'evaluated');assert.equal(await fs.readFile(path.join(cwd,'out.txt'),'utf8'),'bad');assert.equal(generations,2);
+ const experiments=await h.call('experiments',{});assert.equal(experiments.length,2);assert(experiments.every(e=>e.evaluation.cases[0].candidate.passed));
+ const compressed=await h.call('compact',{sessionId:source.sessionId});assert.equal(compressed.status,'completed');assert.equal(compressed.context.summary,true);
+});

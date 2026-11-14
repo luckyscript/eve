@@ -7,6 +7,7 @@ import { TOOL_SCHEMAS } from '../../src/tools.mjs';
 import { capabilities, importBaseline, promote, rollback, privateDirectory, readPrivate, atomicPrivate } from '../../src/registry.mjs';
 import { loadContract } from '../../src/contracts.mjs';
 import { evolve, autoEvolve, freezeSuite } from '../../src/evolution.mjs';
+import { protectLocalConfig } from './local-config.mjs';
 import { prepareAutoEvolution } from '../../src/orchestration.mjs';
 const fields = {
  workspace:['path'], busy:[], cancel:['requestID'], config:[], configure:['values'], secret:['value'], sessions:[], session:['sessionId'], status:['sessionId'], tools:[], skills:[], capabilities:[], experiments:[],
@@ -50,7 +51,8 @@ export class BridgeHost {
      const values=op==='secret'?{apiKey:p.value}:p.values;
      if(!values||typeof values!=='object'||Array.isArray(values)|| (op==='configure'&&Object.hasOwn(values,'apiKey'))) throw new Error('配置参数无效，密钥使用专用操作');
      validateConfig({...config,...values});
-     const dir=await privateDirectory(cwd,[]); // checks private directories against symlinks
+     await privateDirectory(cwd,[]); // checks private directories against symlinks
+     await protectLocalConfig(cwd);
      const file=path.join(cwd,'.eve','config.local.json'); let old={};
      try { const st=await fs.lstat(file); if(st.isSymbolicLink()||!st.isFile()) throw new Error('本地配置路径无效'); old=JSON.parse(await fs.readFile(file,'utf8')); } catch(e) { if(e.code!=='ENOENT') throw e; }
      validateConfig({...old,...values}); await atomicPrivate(file,{...old,...values}); await fs.chmod(file,0o600);

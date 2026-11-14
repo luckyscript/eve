@@ -109,3 +109,16 @@ test('bridge omits unavailable evolution and error fields rather than inventing 
  const {cwd,h}=await host(t);await h.call('workspace',{path:cwd});const result=await h.call('run',{prompt:'hello'});
  assert(!Object.hasOwn(result,'evolution'));assert(!Object.hasOwn(result,'error'));
 });
+
+test('secret settings ensure ignore rules in the chosen workspace and reject symlink ignore files',async t=>{
+ const {cwd,h}=await host(t);await h.call('workspace',{path:cwd});await h.call('secret',{value:'new-private-value'});
+ assert((await fs.readFile(path.join(cwd,'.gitignore'),'utf8')).includes('.eve/config.local.json'));
+ await fs.rm(path.join(cwd,'.gitignore'));await fs.writeFile(path.join(cwd,'other-ignore'),'');await fs.symlink(path.join(cwd,'other-ignore'),path.join(cwd,'.gitignore'));
+ await assert.rejects(h.call('secret',{value:'not-saved'}));
+});
+test('secret settings refuse an already tracked local configuration',async t=>{
+ const {execFileSync}=await import('node:child_process');const {cwd,h}=await host(t);
+ execFileSync('/usr/bin/git',['init','-q'],{cwd});await fs.mkdir(path.join(cwd,'.eve'));await fs.writeFile(path.join(cwd,'.eve/config.local.json'),'{}');
+ execFileSync('/usr/bin/git',['add','-f','--','.eve/config.local.json'],{cwd});await h.call('workspace',{path:cwd});
+ await assert.rejects(h.call('secret',{value:'must-not-be-written'}));assert.equal(await fs.readFile(path.join(cwd,'.eve/config.local.json'),'utf8'),'{}');
+});

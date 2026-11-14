@@ -31,7 +31,7 @@ swift test --package-path macos --scratch-path .build/macos
 
 这是可信本地工作区应用，无 OS sandbox，不需要辅助功能权限来正常使用。自动化 UI 验证工具需要其自身的辅助功能及屏幕录制权限。
 
-当前密钥只显示 configured/not configured。新密钥通过 SecureField、stdin 请求交给宿主，写入 `.eve/config.local.json`，权限 0600，使用私有原子替换，拒绝符号链接；此文件在本项目被忽略追踪。在其他 Git 工作区使用时也应忽略该路径。密钥不会出现在进程参数或 bridge 日志中。外部 `EVE_API_KEY` / `EVE_CONFIG` 仍遵循原配置优先级。
+当前密钥只显示 configured/not configured。新密钥通过 SecureField、stdin 请求交给宿主，写入 `.eve/config.local.json`，权限 0600，使用私有原子替换，拒绝符号链接；保存前宿主检查该路径未被 Git 跟踪，并在选定工作区的 `.gitignore` 末尾确保 `/.eve/config.local.json` 规则；拒绝符号链接和已跟踪的本地配置。检查只使用固定 `/usr/bin/git` 的只读 ls-files 命令，不经过 shell。此规则可能使其他工作区的 `.gitignore` 产生可审阅的修改。密钥不会出现在进程参数或 bridge 日志中。外部 `EVE_API_KEY` / `EVE_CONFIG` 仍遵循原配置优先级。
 
 Swift Process 直接运行固定 Node 和固定 bridge 文件。stdin/stdout JSONL 使用 requestID，操作 allowlist、参数与 256 KiB 输入上限；事件只投影类型、工具名和状态，不发送 arguments、工具正文、完整 history、headers 或原始配置。字符串递归脱敏包括模型回显密钥。stderr 被排空但不渲染。
 

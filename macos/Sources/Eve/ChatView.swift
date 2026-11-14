@@ -27,7 +27,7 @@ struct ChatView: View {
  }
  private var welcome: some View {
   VStack(alignment: .center, spacing: 18) {
-   Image(systemName: "sparkle").font(.system(size: 32, weight: .light)).foregroundStyle(EveTheme.accent)
+   EveAvatar(size: 88)
    Text("一起把想法变成现实").font(.system(size: 25, weight: .medium))
    Text("从一个问题开始，或在工作区里完成一项任务。").font(.system(size: 13)).foregroundStyle(.secondary)
    VStack(spacing: 8) {
@@ -109,7 +109,7 @@ struct RunCard: View {
     Spacer(minLength: 70)
     Text(text(run["prompt"])).font(.system(size: 14)).lineSpacing(4).textSelection(.enabled).padding(.horizontal, 16).padding(.vertical, 12).background(EveTheme.userBubble, in: RoundedRectangle(cornerRadius: 17))
    }.padding(.bottom, 9)
-   Label("Eve", systemImage: "sparkle").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+   HStack(spacing: 7) { EveAvatar(size: 24); Text("Eve").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary) }
    ViewThatFits(in: .horizontal) { HStack { StatusBadge(label: "任务", value: text(run["status"])); StatusBadge(label: "模型", value: text(run["modelStatus"])); StatusBadge(label: "独立验收", value: text(object(run["verification"])["status"])) }; VStack(alignment: .leading) { StatusBadge(label: "任务", value: text(run["status"])); StatusBadge(label: "模型", value: text(run["modelStatus"])); StatusBadge(label: "独立验收", value: text(object(run["verification"])["status"])) } }
    if !text(run["final"]).isEmpty { Text(text(run["final"])).font(.system(size: 14)).lineSpacing(5).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
    if let error = run["error"] { Text(text(object(error)["message"])).foregroundStyle(.orange).textSelection(.enabled) }

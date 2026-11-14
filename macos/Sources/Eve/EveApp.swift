@@ -3,7 +3,7 @@ import AppKit
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
  weak var model: AppModel?
- func applicationDidFinishLaunching(_ notification: Notification) { NSApp.setActivationPolicy(.regular); NSApp.applicationIconImage = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Eve") }
+ func applicationDidFinishLaunching(_ notification: Notification) { NSApp.setActivationPolicy(.regular); NSApp.applicationIconImage = EveBrand.icon }
  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
   if model?.busy == true {
    let alert = NSAlert(); alert.messageText = "任务仍在运行"; alert.informativeText = "请先取消并等待任务收尾，再退出。已写入的产物会保留。"; alert.runModal(); return .terminateCancel

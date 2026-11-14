@@ -10,6 +10,10 @@ swift build --package-path macos --scratch-path .build/macos --configuration rel
 BIN_DIR="$(swift build --package-path macos --scratch-path .build/macos --configuration release --show-bin-path)"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bridge" "$APP/Contents/Resources/runtime"
 cp "$BIN_DIR/Eve" "$APP/Contents/MacOS/Eve"
+# Ship the SwiftPM bundle for relocation; Finder/Dock also need the top-level ICNS.
+rm -rf "$APP/Contents/Resources/Eve_Eve.bundle"
+cp -R "$BIN_DIR/Eve_Eve.bundle" "$APP/Contents/Resources/Eve_Eve.bundle"
+cp macos/Sources/Eve/Resources/Eve.icns "$APP/Contents/Resources/Eve.icns"
 # Explicit source allowlist: never copy the workspace, .eve or local config.
 rm -rf "$APP/Contents/Resources/src" "$APP/Contents/Resources/bridge/Bridge" "$APP/Contents/Resources/skills"
 cp -R macos/Bridge "$APP/Contents/Resources/bridge/Bridge"
@@ -26,6 +30,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>com.luckyscript.eve</string>
 <key>CFBundleName</key><string>Eve</string>
 <key>CFBundleDisplayName</key><string>Eve</string>
+<key>CFBundleIconFile</key><string>Eve.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.2.0</string>
 <key>CFBundleVersion</key><string>2</string>

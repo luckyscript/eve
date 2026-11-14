@@ -54,6 +54,15 @@ struct SettingsView: View {
  let numericKeys = ["maxSteps", "maxToolCalls", "timeoutMs", "maxOutputTokens", "maxToolChars", "temperature", "contextMaxChars", "contextRecentGroups", "contextSummaryChars"]
  var body: some View {
   Form {
+   Section("关于 Eve") {
+    HStack(spacing: 12) {
+     EveBrandMark(size: 44)
+     VStack(alignment: .leading, spacing: 4) {
+      Text("Eve · 夏娃").font(.headline)
+      Text("以好奇探索知识，在实践中不断新生与自我进化。").font(.caption).foregroundStyle(.secondary)
+     }
+    }.padding(.vertical, 4)
+   }
    Section("外观") {
     Picker("应用外观", selection: $appearance) {
      Text("跟随系统").tag("system")

@@ -42,7 +42,8 @@ struct ContentView: View {
  private var sidebar: some View {
   VStack(alignment: .leading, spacing: 0) {
    HStack(spacing: 6) {
-    Label("Eve", systemImage: "sparkle").font(.system(size: 17, weight: .semibold))
+    EveBrandMark(size: 30)
+    Text("Eve").font(.system(size: 17, weight: .semibold))
     Spacer()
     QuietIconButton(title: "搜索会话", symbol: "magnifyingglass") { showSearch.toggle(); searchFocused = showSearch; if !showSearch { search = "" } }
     QuietIconButton(title: "新会话", symbol: "square.and.pencil", action: model.newSession).disabled(model.busy)

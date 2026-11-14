@@ -1,20 +1,91 @@
-# eve · Agent PoC
+# Eve · 夏娃
 
-一个可直接运行的终端 Agent 原型：**Agent Loop、长上下文持久会话、文件搜索与精确编辑、独立产物验收、skills 按需注入、交互 TUI、分层配置**。
+<img src="assets/brand/eve-icon-1024.png" width="96" alt="Eve：长出新叶的字母 e" />
 
-使用 Node.js 22+ 的原生模块，无第三方运行依赖，无需 `npm install`。本版使用自行实现的最小 OpenAI-compatible 工具循环，**未接入 Pi 或 DeepSeek Harness**；先固定 eve 的工具/技能/验证接口，后续可以替换运行时。
+**一个支持可验证技能进化的本地 Agent，提供原生 macOS 客户端、终端 TUI 和 CLI。**
+
+Eve 取意“夏娃”：以好奇心探索，从经验中成长。Logo 是长出新叶的小写 **e**；人物头像用叶饰与之呼应。品牌资源与可复现生成方式见 [品牌说明](assets/brand/README.md)。
+
+<img src="macos/Sources/Eve/Resources/eve-avatar.png" width="128" alt="Eve 夏娃人物头像" />
+
+Eve 不把模型说“完成了”作为唯一依据：任务可以由宿主通过文件、JSON、文本与内容哈希独立验收；技能候选必须经过隔离的基线对照评测，才能用于后续任务。
+
+当前版本面向单用户、可信本地工作区，属于早期可运行版本。**自进化指有预算、有证据、可回滚的技能文本进化，不是模型权重训练，也不代表任意任务上的通用能力提升。**
+
+## 能力概览
+
+| 能力 | 当前实现 |
+|---|---|
+| 原生 macOS 客户端 | SwiftUI / AppKit、浅深主题、工作区选择、会话搜索、消息与工具时间线、配置、契约及进化操作 |
+| Agent Loop | OpenAI-compatible 接口、多轮工具调用、错误反馈、串行执行、预算与取消 |
+| 工作区工具 | 列文件、读写、literal 搜索、唯一精确编辑、按需加载技能 |
+| 会话与上下文 | 私有持久账本、跨进程续聊、有来源的压缩摘要、未知副作用显式标记 |
+| 独立任务验收 | 声明式契约，宿主检查磁盘产物，区分模型结束与验收通过 |
+| Skills | 元数据发现、按需正文注入、哈希校验与运行固定版本 |
+| 技能自进化 | 失败与纠正 → 候选生成 → 隔离对照评测 → 晋级 → 后续任务使用 → 回滚 |
+| 配置与证据 | 分层配置、密钥脱敏、请求审计、本地原始轨迹与版本记录 |
+
+Node 核心使用原生 ESM，无第三方运行依赖，无需 `npm install`。当前为自行实现的 OpenAI-compatible 工具循环，**未接入 Pi 或 DeepSeek Harness 运行时**；前期调研见 [技术方案](docs/eve-agent-technical-proposal.md)。桌面版通过固定 Node 子进程复用同一套核心，不维护另一套 Agent 算法。
+
+## 快速开始
+
+```bash
+git clone https://github.com/luckyscript/eve.git
+cd eve
+node --version  # Node.js 22+
+node bin/eve.mjs config init
+```
+
+编辑生成的 `.eve/config.local.json`，填写自己的 `baseUrl`、`model` 和 `apiKey`，然后选择下方的 macOS 客户端或终端入口。示例文件见 [.eve/config.example.json](.eve/config.example.json)。不要把真实凭据写进该示例或提交到仓库。
+
+默认接口是本地 `http://127.0.0.1:3425/v1`；它不是 Eve 自带的模型服务，需要先确保自己的兼容服务可用。真实模型验证同样需要有效配置。仓库和应用包均不包含本机密钥。
 
 ## 原生 macOS 客户端
 
-`npm run macos:build` 构建原生 SwiftUI 应用 `dist/Eve.app`。界面采用浅色侧栏、白色画布、独立消息气泡与悬浮输入框；支持真实会话搜索、应用内浅色/深色切换，契约、工具证据、进化和设置能力完整保留。使用说明与验收边界见 [macOS 客户端](docs/macos-client.md)。
+<img src="assets/brand/eve-logo-source.png" width="72" alt="Eve 新芽 Logo" />
 
-## 启动
+客户端使用 **SwiftUI / AppKit**，没有 Electron、Tauri 或 WebView。界面参考 Alma 的轻量侧栏、白色画布、独立消息气泡与悬浮输入框，并使用 Eve 自己的 Logo 和人物头像。
+
+在 macOS 上安装 Xcode / Swift 工具链，并确保 `/usr/local/bin/node` 为可运行的 Node.js 22+。当前构建脚本使用此固定路径，并会检查 Node 是否依赖未打包的非系统动态库：
+
+```bash
+npm run macos:build
+open dist/Eve.app
+```
+
+`dist/` 是本地生成、Git 忽略的构建目录；克隆仓库不会自动获得 `.app` 或 zip。需要归档时，可在成功构建后执行：
+
+```bash
+ditto -c -k --sequesterRsrc --keepParent dist/Eve.app dist/Eve-macos-arm64.zip
+```
+
+应用包包含 Node 运行时、白名单核心模块和品牌资源，不复制 `.eve`、本地配置或凭据。首次打开后选择工作区；可读取该工作区已有配置，也可在设置中填写服务、模型和密钥。
+
+- 侧栏：选择工作区、搜索或恢复会话、新建任务。
+- 聊天：查看工具过程、任务状态、模型状态和独立验收结果；Command-Return 发送。
+- 输入区：选择验收契约、查看上下文、手动压缩；自动进化需先配置技能、suite 和预算。
+- 工作台：查看工具、技能和已发布能力；在进化页生成候选、评测、发布或回滚。
+- 设置：模型与服务、密钥、运行预算、上下文、技能目录、浅色/深色外观。
+
+**当前交付只在本机 Apple Silicon Mac 验证，采用 ad-hoc 本地签名，尚未公证或完成跨机分发验证。** 构建目标最低 macOS 14，不代表已在所有该版本系统实测。详细操作、IPC 与凭据边界，以及 UI 自动化尚未覆盖的部分见 [macOS 客户端文档](docs/macos-client.md)。
+
+## 终端与 CLI 启动
 
 在项目根目录：
 
 ```bash
 npm start
 ```
+
+需要在终端直接使用 `eve` 时，可以把本地包链接到 npm 的用户命令目录：
+
+```bash
+npm link --ignore-scripts --no-audit --no-fund --offline
+eve --help
+eve
+```
+
+该命令链接源码，仍需要 Node.js；是否能在任意目录直接找到 `eve` 取决于 npm 全局 bin 目录是否在 PATH。命令默认以当前目录为工作区，使用 `eve --cwd /path/to/workspace` 可以显式指定。
 
 默认连接本地服务 `http://127.0.0.1:3425/v1`，模型为 `macmini-magpie/bailian-token-plan/qwen3.8-max`。认证从忽略追踪的 `.eve/config.local.json` 或 `EVE_API_KEY` 获取，不写进源码。
 
@@ -112,7 +183,7 @@ node bin/eve.mjs run --session report-task --prompt "检查上轮输出并继续
 
 ## 可验证的技能自进化
 
-手工维护的 `skills/**/SKILL.md` 仍是 **trusted user** 指令，不是进化系统发布的候选。普通工具现在禁止写入配置的技能根目录或任何 `SKILL.md`，防止绕过验收。用户可以手工编辑原始技能；参与进化前显式导入 baseline，同名 active 存在时禁止再次 import 覆盖：
+手工维护的 `skills/**/SKILL.md` 仍是 **trusted user** 指令，不是进化系统发布的候选。普通工具现在禁止写入配置的技能根目录或任何 `SKILL.md`，防止绕过验收。用户可以手工编辑原始技能；参与进化前显式导入 baseline，同名 active 存在时禁止再次 import 覆盖。下例中的 `inventory-report`、契约和 suite 需由用户先创建，`r-UUID` 换成实际 runId；仓库自带的演示技能是 `workspace-report`，想直接复跑完整演示请运行 `npm run verify:evolution`：
 
 ```bash
 node bin/eve.mjs evolve import --file skills/inventory-report/SKILL.md
@@ -268,14 +339,40 @@ workspace 由 `--cwd DIR` 指定，默认当前目录。配置中的相对 skill
 
 未知字段、非法类型、超出 PoC 限额等均报错，不静默吞掉。`config set` 写入权限为 0600 的本地配置，拒绝直接设置密钥参数，避免密钥进入终端历史。
 
-## 验证
+## 验证与验收记录
+
+不请求模型的回归检查：
 
 ```bash
 npm test
 npm run check
 npm run verify:tui
-npm run verify:live
+# macOS 原生协议、配置、标题和搜索逻辑
+swift test --package-path macos --scratch-path .build/macos
 ```
+
+真实模型验证必须先配置自己的接口和认证，**会产生请求费用或本地资源消耗**。按需选择，不要把全部脚本当作免费单元测试：
+
+```bash
+npm run verify:live           # 工具循环与技能正文随机标记
+npm run verify:sessions-live  # 跨进程会话与独立验收
+npm run verify:agent          # 搜索、编辑、摘要及跨进程回忆
+npm run verify:evolution      # 生成、对照评测、晋级、回滚完整演示
+npm run macos:build
+npm run verify:macos          # 打包内 Node / bridge 的真实调用
+```
+
+最近已记录的版本回归为 **72 项 Node 测试、8 项 Swift 测试、11 项终端检查通过**。这不是每次克隆或每台机器上的自动保证。核心真实进化演示在四个案例上得到 baseline **1/4**、candidate **4/4**，并验证新进程加载、回滚和拒绝未评测候选；它只证明该评测范围内的局部提升。
+
+| 文档 | 记录内容 |
+|---|---|
+| [核心 Agent 最终验收](docs/agent-completion-verification.md) | 被测源码指纹、推送后回归、真实模型请求预算与进化证据 |
+| [macOS 客户端](docs/macos-client.md) | 构建、操作、原生/bridge 验证及 UI 自动化边界 |
+| [品牌资源](assets/brand/README.md) | 夏娃人物、Logo、图标生成与最新品牌回归 |
+| [会话验收](docs/session-feature-verification.md) | 会话续聊、错误产物拒绝与恢复语义 |
+| [长上下文验收](docs/context-feature-verification.md) | 文件搜索、精确编辑、摘要和回忆 |
+
+完整进化脚本会发出数十次模型请求；预算和报告路径见上文。原生 UI 的任务提交已实测，但“文件选择器选取契约 → UI 最终验收通过”的完整自动化链路尚未覆盖，不能用 bridge 通过替代这一 UI 覆盖结论。
 
 - `npm test`：可控模型响应下验证多轮工具协议、技能按需注入、错误纠正、路径与参数限制、配置优先级、超时取消、预算、截断响应与拒绝写入的副作用。
 - `npm run check`：使用 `node --check` 对运行模块做语法检查；不是 TypeScript 类型检查。
@@ -307,6 +404,14 @@ npm run verify:live
 ## 代码导航
 
 ```text
+macos/Package.swift         原生 SwiftUI / SwiftPM 工程入口
+macos/Sources/Eve/          原生界面、状态和子进程客户端
+macos/Sources/EveProtocol/  协议解码与配置等可测试逻辑
+macos/Bridge/              固定 JSONL bridge、宿主 API 与私有配置保存
+assets/brand/              Logo、夏娃人物原图与品牌说明
+scripts/build-macos.sh     打包内置 Node、原生应用与本地签名
+scripts/generate-brand.swift  可复现品牌资源与图标
+src/orchestration.mjs       CLI / 桌面共享的任务与自动进化编排
 bin/eve.mjs                 CLI 入口
 src/config.mjs              配置与脱敏
 src/skills.mjs              发现、元数据、按需加载与哈希校验

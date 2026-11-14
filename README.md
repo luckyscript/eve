@@ -4,6 +4,10 @@
 
 使用 Node.js 22+ 的原生模块，无第三方运行依赖，无需 `npm install`。本版使用自行实现的最小 OpenAI-compatible 工具循环，**未接入 Pi 或 DeepSeek Harness**；先固定 eve 的工具/技能/验证接口，后续可以替换运行时。
 
+## 原生 macOS 客户端
+
+`npm run macos:build` 构建原生 SwiftUI 应用 `dist/Eve.app`。界面采用浅色侧栏、白色画布、独立消息气泡与悬浮输入框；支持真实会话搜索、应用内浅色/深色切换，契约、工具证据、进化和设置能力完整保留。使用说明与验收边界见 [macOS 客户端](docs/macos-client.md)。
+
 ## 启动
 
 在项目根目录：

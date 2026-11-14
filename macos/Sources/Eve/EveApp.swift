@@ -17,9 +17,9 @@ import AppKit
  var body: some Scene {
   WindowGroup("Eve") {
    ContentView(model: model)
-    .frame(minWidth: 1020, minHeight: 720)
+    .frame(minWidth: 900, minHeight: 640)
     .onAppear { delegate.model = model; model.restore() }
-  }.defaultSize(width: 1250, height: 860)
+  }.defaultSize(width: 1180, height: 820)
    .commands {
     CommandGroup(replacing: .newItem) { Button("新会话") { model.newSession() }.keyboardShortcut("n").disabled(model.busy); Button("选择工作区…") { model.chooseWorkspace() }.keyboardShortcut("o").disabled(model.busy) }
    }

@@ -9,7 +9,7 @@ struct ToolsView: View {
     let function = object(item["function"])
     GroupBox { VStack(alignment: .leading, spacing: 8) { Label(text(function["name"]), systemImage: "wrench").font(.headline); Text(text(function["description"])).textSelection(.enabled); JSONDetails(title: "参数 schema", value: function["parameters"]) }.frame(maxWidth: .infinity, alignment: .leading).padding(8) }
    }
-  }.padding() }
+  }.padding(24).frame(maxWidth: EveTheme.contentWidth).frame(maxWidth: .infinity, alignment: .top) }
  }
 }
 struct SkillsView: View {
@@ -23,7 +23,7 @@ struct SkillsView: View {
     TableColumn("说明") { row in Text(text(row.value["description"])).textSelection(.enabled) }
     TableColumn("SHA-256") { row in Text(text(row.value["hash"])).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }.width(min: 160, ideal: 210)
    }
-  }.padding()
+  }.padding(24)
  }
 }
 struct SkillRow: Identifiable { let id: Int; let value: JSONObject }
@@ -45,14 +45,22 @@ struct CapabilitiesView: View {
      JSONDetails(title: "版本证据", value: c)
     }.frame(maxWidth: .infinity, alignment: .leading).padding(8) }
    }
-  }.padding() }
+  }.padding(24).frame(maxWidth: EveTheme.contentWidth).frame(maxWidth: .infinity, alignment: .top) }
  }
 }
 struct SettingsView: View {
  @ObservedObject var model: AppModel
+ @AppStorage("appearance") private var appearance = "system"
  let numericKeys = ["maxSteps", "maxToolCalls", "timeoutMs", "maxOutputTokens", "maxToolChars", "temperature", "contextMaxChars", "contextRecentGroups", "contextSummaryChars"]
  var body: some View {
   Form {
+   Section("外观") {
+    Picker("应用外观", selection: $appearance) {
+     Text("跟随系统").tag("system")
+     Text("浅色").tag("light")
+     Text("深色").tag("dark")
+    }.pickerStyle(.segmented).accessibilityLabel("应用外观")
+   }
    Section("模型连接") {
     field("baseUrl", "Base URL（包含端口和 /v1）")
     field("model", "模型")
@@ -71,7 +79,7 @@ struct SettingsView: View {
     Button("保存全部配置", action: model.saveSettings).buttonStyle(.borderedProminent)
     Text("仅保存编辑过的字段，再重新加载有效配置。脱敏值需完整替换后才能修改；核心验证全部预算，配置优先级与 CLI 一致。").font(.caption).foregroundStyle(.secondary)
    }
-  }.formStyle(.grouped).disabled(model.busy)
+  }.formStyle(.grouped).scrollContentBackground(.hidden).background(EveTheme.canvas).disabled(model.busy)
  }
  func field(_ key: String, _ label: String) -> some View { TextField(label, text: Binding(get: { model.configDraft[key] ?? "" }, set: { model.configDraft[key] = $0 })).textFieldStyle(.roundedBorder) }
 }

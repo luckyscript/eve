@@ -25,6 +25,8 @@ enum Page: String, CaseIterable, Identifiable {
  @Published var error: String?
  @Published var sessions: [JSONObject] = []
  @Published var selectedSession = ""
+ @Published var sessionTitles: [String: String] = [:]
+ private var titleRevisions: [String: String] = [:]
  @Published var runs: [JSONObject] = []
  @Published var events: [JSONObject] = []
  @Published var latest: JSONObject = [:]
@@ -95,6 +97,7 @@ enum Page: String, CaseIterable, Identifiable {
   perform("打开工作区") {
    let result = object(try await self.call("workspace", ["path": path]))
    self.workspace = text(result["path"]); UserDefaults.standard.set(self.workspace, forKey: "workspace")
+   self.sessionTitles = [:]; self.titleRevisions = [:]
    self.selectedSession = ""; self.runs = []; self.latest = [:]; self.events = []; self.context = [:]
    self.sourceSession = ""; self.sourceRun = ""; self.sourceRuns = []; self.contractFile = ""; self.suiteFile = ""; self.autoEvolve = false
    self.contractState = "未选择 · 不进行独立验收"; self.suiteState = "未选择 suite"
@@ -103,11 +106,26 @@ enum Page: String, CaseIterable, Identifiable {
  }
  func refreshAll() async throws {
   sessions = objects(try await call("sessions"))
+  // Use the existing redacted projection, never read private ledgers directly.
+  for session in sessions {
+   let id = text(session["id"]), revision = text(session["updatedAt"]) + ":" + text(session["runs"])
+   guard titleRevisions[id] != revision else { continue }
+   do {
+    let data = object(try await call("session", ["sessionId": id]))
+    sessionTitles[id] = SessionPresentation.title(prompt: text(objects(data["runs"]).first?["prompt"]))
+    titleRevisions[id] = revision
+   } catch { sessionTitles[id] = "无法读取的会话" }
+  }
+  let ids = Set(sessions.map { text($0["id"]) })
+  sessionTitles = sessionTitles.filter { ids.contains($0.key) }
+  titleRevisions = titleRevisions.filter { ids.contains($0.key) }
   config = object(try await call("config")); updateDraft()
   tools = objects(try await call("tools"))
   let s = object(try await call("skills")); skills = objects(s["skills"]); warnings = s["warnings"] as? [String] ?? []
   capabilities = object(try await call("capabilities")); experiments = objects(try await call("experiments"))
  }
+ func sessionTitle(_ id: String) -> String { sessionTitles[id] ?? "未命名会话" }
+ var chatTitle: String { selectedSession.isEmpty ? "新会话" : sessionTitle(selectedSession) }
  func refresh() { perform("刷新") { try await self.refreshAll() } }
  func updateDraft() {
   configDraft = config.filter { $0.key != "apiKey" }.mapValues { $0 is [String] ? ($0 as! [String]).joined(separator: "\n") : text($0) }

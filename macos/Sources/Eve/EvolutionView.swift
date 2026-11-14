@@ -7,7 +7,7 @@ struct EvolutionView: View {
    GroupBox("来源与预算") { VStack(alignment: .leading, spacing: 12) {
     Picker("Source session", selection: Binding(get: { model.sourceSession }, set: { model.loadSource($0) })) {
      Text("请选择").tag("")
-     ForEach(Array(model.sessions.enumerated()), id: \.offset) { _, s in Text(text(s["id"])).tag(text(s["id"])) }
+     ForEach(Array(model.sessions.enumerated()), id: \.offset) { _, s in Text(model.sessionTitle(text(s["id"]))).tag(text(s["id"])) }
     }
     Picker("Source run", selection: $model.sourceRun) {
      Text("请选择").tag("")
@@ -26,7 +26,7 @@ struct EvolutionView: View {
    HStack { Text("实验记录").font(.headline); Spacer(); Button("刷新", action: model.refresh).disabled(model.busy) }
    if model.experiments.isEmpty { Text("尚无实验。失败和记录异常也会保留在宿主私有账本中。").foregroundStyle(.secondary) }
    ForEach(Array(model.experiments.reversed().enumerated()), id: \.offset) { _, r in ExperimentCard(record: r, title: text(r["experimentId"])) }
-  }.padding() }
+  }.padding(24).frame(maxWidth: EveTheme.contentWidth).frame(maxWidth: .infinity, alignment: .top) }
  }
 }
 struct ExperimentCard: View {

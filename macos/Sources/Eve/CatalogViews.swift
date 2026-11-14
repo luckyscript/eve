@@ -69,7 +69,7 @@ struct SettingsView: View {
    }
    Section {
     Button("保存全部配置", action: model.saveSettings).buttonStyle(.borderedProminent)
-    Text("保存后重新加载有效配置；核心验证所有字段和预算上限。配置优先级与 CLI 一致。").font(.caption).foregroundStyle(.secondary)
+    Text("仅保存编辑过的字段，再重新加载有效配置。脱敏值需完整替换后才能修改；核心验证全部预算，配置优先级与 CLI 一致。").font(.caption).foregroundStyle(.secondary)
    }
   }.formStyle(.grouped).disabled(model.busy)
  }

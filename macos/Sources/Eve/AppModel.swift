@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import EveProtocol
 
 typealias JSONObject = [String: Any]
 func object(_ value: Any?) -> JSONObject { value as? JSONObject ?? [:] }
@@ -53,6 +54,7 @@ enum Page: String, CaseIterable, Identifiable {
  @Published var evolutionResult: JSONObject = [:]
  @Published var cancelRequested = false
  private var activeID: String?
+ private var configBaseline: [String: String] = [:]
 
  init() {
   bridge.onEvent = { [weak self] id, event in
@@ -109,6 +111,7 @@ enum Page: String, CaseIterable, Identifiable {
  func refresh() { perform("刷新") { try await self.refreshAll() } }
  func updateDraft() {
   configDraft = config.filter { $0.key != "apiKey" }.mapValues { $0 is [String] ? ($0 as! [String]).joined(separator: "\n") : text($0) }
+  configBaseline = configDraft
  }
  func newSession() { guard !busy else { return }; selectedSession = ""; runs = []; events = []; latest = [:]; context = [:]; page = .chat }
  func resume(_ id: String) {
@@ -162,13 +165,9 @@ enum Page: String, CaseIterable, Identifiable {
  }
  func saveSettings() {
   perform("保存本地配置") {
-   var values: JSONObject = [:]
-   for (key, value) in self.configDraft {
-    if key == "skillsDirs" { values[key] = value.split(separator: "\n").map(String.init) }
-    else if key == "userSkills" { values[key] = value == "true" || value == "1" }
-    else if ["baseUrl", "model"].contains(key) { values[key] = value }
-    else { guard let n = Double(value) else { throw BridgeFailure(message: "\(key) 必须为数字") }; values[key] = n }
-   }
+   let patch = try ConfigurationPatch.make(baseline: self.configBaseline, draft: self.configDraft)
+   let values = object(try JSONSerialization.jsonObject(with: patch))
+   guard !values.isEmpty else { return }
    _ = try await self.call("configure", ["values": values]); self.config = object(try await self.call("config")); self.updateDraft()
   }
  }

@@ -22,3 +22,24 @@ final class ProtocolTests: XCTestCase {
   XCTAssertThrowsError(try decoder.append(Data("[]\n".utf8)))
  }
 }
+
+final class ConfigurationPatchTests: XCTestCase {
+ func testChangingBudgetDoesNotWriteRedactedUneditedModel() throws {
+  let baseline = ["model": "local-[redacted]/model", "timeoutMs": "90000", "skillsDirs": "skills"]
+  var draft = baseline; draft["timeoutMs"] = "120000"
+  let patch = try JSONSerialization.jsonObject(with: ConfigurationPatch.make(baseline: baseline, draft: draft)) as! [String: Any]
+  XCTAssertEqual(patch.count, 1)
+  XCTAssertEqual(patch["timeoutMs"] as? Int, 120000)
+  XCTAssertNil(patch["model"])
+ }
+ func testEditingRedactedValueRequiresCompleteReplacement() {
+  XCTAssertThrowsError(try ConfigurationPatch.make(baseline: ["model": "local-[redacted]"], draft: ["model": "local-[redacted]-new"]))
+ }
+ func testNoEditsProducesEmptyPatchAndDirectoriesKeepSpaces() throws {
+  let empty = try JSONSerialization.jsonObject(with: ConfigurationPatch.make(baseline: ["model": "old"], draft: ["model": "old"])) as! [String: Any]
+  XCTAssertTrue(empty.isEmpty)
+  let patch = try JSONSerialization.jsonObject(with: ConfigurationPatch.make(baseline: [:], draft: ["skillsDirs": "skills\nmy skills", "userSkills": "true"])) as! [String: Any]
+  XCTAssertEqual(patch["skillsDirs"] as? [String], ["skills", "my skills"])
+  XCTAssertEqual(patch["userSkills"] as? Bool, true)
+ }
+}

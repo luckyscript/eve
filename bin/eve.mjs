@@ -7,6 +7,7 @@ import { discoverSkills } from '../src/skills.mjs';
 import { runSession, listSessions, compactSession, sessionStatus } from '../src/sessions.mjs';
 import { startTui } from '../src/tui.mjs';
 import { capabilities, importBaseline, promote, rollback } from '../src/registry.mjs';
+import { prepareAutoEvolution } from '../src/orchestration.mjs';
 import { evolve, autoEvolve, freezeSuite } from '../src/evolution.mjs';
 
 const help = `eve — local workspace agent PoC\n\n  npm start                              交互 TUI\n  npm run eve -- run --prompt "任务"      单次运行\n  npm run eve -- run --prompt "任务" --json\n  npm run eve -- sessions                持久会话列表\n  npm run eve -- run --session ID --contract FILE --prompt \"任务\"\n  npm run eve -- tools                   工具能力（无 shell/exec）\n  npm run eve -- status --session ID      上下文预算和摘要状态\n  npm run eve -- compact --session ID     手动压缩，保留原始会话\n  npm run eve -- skills                  技能列表\n  npm run eve -- capabilities            发布能力与候选状态\n  npm run eve -- evolve import --file skills/NAME/SKILL.md\n  npm run eve -- evolve --session ID --run RUNID --skill NAME --suite FILE --max-requests 45\n  npm run eve -- evolve promote ID        发布已通过评测的候选\n  npm run eve -- evolve rollback NAME     撤回版本，下一任务生效\n  run --auto-evolve --skill NAME --suite FILE --max-requests N（需要 --contract）\n  npm run eve -- config show             查看脱敏配置\n  npm run eve -- config init             创建无密钥本地配置\n  npm run eve -- config set model NAME   设置本地配置\n\n全局选项：--cwd DIR  --model NAME  --base-url URL\n密钥仅通过 EVE_API_KEY 或 .eve/config.local.json 提供。\n`;
@@ -73,10 +74,7 @@ try {
   } else if (command === 'run') {
     let frozenSuite;
     if (o['auto-evolve']) {
-      if (!o.contract || !o.skill || !o.suite || !Number.isInteger(Number(o['max-requests'])) || Number(o['max-requests']) < 1 || Number(o['max-requests']) > 100) throw new Error('--auto-evolve 需要 --contract --skill --suite --max-requests 1–100；最多一个候选，不重放任务');
-      frozenSuite = await freezeSuite(cwd, o.suite);
-      const { suite } = frozenSuite;
-      if (1 + 2 * suite.cases.length * suite.budget.maxSteps > Number(o['max-requests'])) throw new Error('auto-evolve 请求预算不足');
+      frozenSuite = await prepareAutoEvolution({ cwd, contractFile: o.contract, skill: o.skill, suiteFile: o.suite, maxRequests: Number(o['max-requests']) });
     }
     if (!o.prompt) throw new Error('run 需要 --prompt');
     const controller = new AbortController();

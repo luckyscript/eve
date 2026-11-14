@@ -24,7 +24,12 @@ async function responseJson(response) {
   catch { throw new AgentError('PROTOCOL', '模型响应不是合法 JSON'); }
 }
 export function withAbort(promise, signal) {
-  if (signal.aborted) return Promise.reject(signal.reason);
+  if (signal.aborted) {
+    // The caller already created this request promise. Observe its eventual
+    // rejection even when cancellation won before this wrapper was entered.
+    Promise.resolve(promise).catch(() => {});
+    return Promise.reject(signal.reason);
+  }
   return new Promise((resolve, reject) => {
     const aborted = () => { signal.removeEventListener('abort', aborted); reject(signal.reason); };
     signal.addEventListener('abort', aborted, { once: true });

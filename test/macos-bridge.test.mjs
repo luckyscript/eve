@@ -82,12 +82,12 @@ test('bridge actual APIs cover tools, compression, evolution scores, promote, ro
  const suiteFile=path.join(cwd,'suite.json');await fs.writeFile(suiteFile,JSON.stringify({version:1,maxCandidates:3,budget:{maxSteps:3,maxToolCalls:4,maxOutputTokens:512,timeoutMs:10000},cases:[{id:'hidden',prompt:'Use native-proof to write out.txt',files:{'input.txt':'PRIVATE_SUITE_CANARY'},contract}]}));
  const source=await h.call('run',{prompt:'Use native-proof to write out.txt',contractFile,sessionId:'evolution-source'});assert.equal(source.verification.status,'failed');
  assert.equal((await h.call('suite',{file:suiteFile})).requestCeiling,7);
- const args={sessionId:source.sessionId,runId:source.runId,skill:'native-proof',suiteFile,maxRequests:10,autoPromote:false};
+ const args={sessionId:source.sessionId,runId:source.runId,skill:'native-proof',suiteFile,maxRequests:10,autoPromote:false,correction:''};
  const evolved=await h.call('evolve',args);assert.equal(evolved.status,'evaluated');assert.equal(evolved.evaluation.cases[0].baseline.passed,false);assert.equal(evolved.evaluation.cases[0].candidate.passed,true);
  assert(!JSON.stringify(captures.find(q=>!q.tools)).includes('PRIVATE_SUITE_CANARY'));assert(!JSON.stringify(captures.find(q=>!q.tools)).includes('assertions'));
  assert.equal((await h.call('promote',{id:evolved.candidate.id})).status,'active');
  assert.equal((await h.call('rollback',{name:'native-proof'})).active,baseline.hash);
- const auto=await h.call('run',{prompt:'Use native-proof to write out.txt',contractFile,autoEvolve:true,skill:'native-proof',suiteFile,maxRequests:10,autoPromote:false});
+ const auto=await h.call('run',{prompt:'Use native-proof to write out.txt',contractFile,autoEvolve:true,skill:'native-proof',suiteFile,maxRequests:10,autoPromote:false,correction:''});
  assert.equal(auto.evolution.status,'evaluated');assert.equal(await fs.readFile(path.join(cwd,'out.txt'),'utf8'),'bad');assert.equal(generations,2);
  const experiments=await h.call('experiments',{});assert.equal(experiments.length,2);assert(experiments.every(e=>e.evaluation.cases[0].candidate.passed));
  const compressed=await h.call('compact',{sessionId:source.sessionId});assert.equal(compressed.status,'completed');assert.equal(compressed.context.summary,true);

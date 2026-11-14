@@ -32,7 +32,7 @@ export class BridgeHost {
   for (const [k,v] of Object.entries(p)) {
    if (['maxRequests','timeoutMs'].includes(k)) { if(!Number.isInteger(v)||v<1||v>(k==='maxRequests'?100:1800000)) throw new Error('预算无效'); }
    else if (['autoEvolve','autoPromote'].includes(k)) { if(typeof v!=='boolean') throw new Error('开关无效'); }
-   else if(k!=='values' && (typeof v!=='string'||v.length>(['prompt','correction'].includes(k)?16000:4096)||!v.trim())) throw new Error('字符串参数无效');
+   else if(k!=='values' && (typeof v!=='string'||v.length>(['prompt','correction'].includes(k)?16000:4096)||(k!=='correction'&&!v.trim()))) throw new Error('字符串参数无效');
   }
   if(op==='busy') return {busy:!!this.active,requestID:this.active,workspace:this.cwd};
   if(op==='cancel') { this.controllers.get(p.requestID)?.abort(); return {requested:this.controllers.has(p.requestID),writesReverted:false}; }

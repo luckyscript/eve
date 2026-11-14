@@ -11,7 +11,7 @@ struct ChatView: View {
     Button("压缩上下文", action: model.compact).disabled(model.busy || model.selectedSession.isEmpty).help("调用核心压缩 API，保留原账本")
    }.padding(.horizontal).padding(.vertical, 10)
    if !model.context.isEmpty {
-    HStack(spacing: 14) { Text("上下文 \(text(model.context["contextChars"])) / \(text(model.context["contextMaxChars"])) 字符"); Text("摘要 \(text(model.context["summary"])) · 压缩 \(text(model.context["compactions"])) 次"); Spacer() }.font(.caption).foregroundStyle(.secondary).padding(.horizontal).padding(.bottom, 8)
+    HStack(spacing: 14) { Text("上下文 \(text(model.context["contextChars"])) / \(text(model.context["contextMaxChars"])) 字符"); Text("摘要 \(model.context["summary"] as? Bool == true ? "有" : "无") · 压缩 \(text(model.context["compactions"])) 次"); Spacer() }.font(.caption).foregroundStyle(.secondary).padding(.horizontal).padding(.bottom, 8)
    }
    ScrollView {
     VStack(alignment: .leading, spacing: 18) {

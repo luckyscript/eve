@@ -8,6 +8,9 @@ function send(value) {
  output.catch(()=>{host.controllers.forEach(c=>c.abort());process.exitCode=1;process.stdin.destroy();});
 }
 const host=new BridgeHost({onEvent:(requestID,event)=>send({requestID,type:'event',event})});
+// EPIPE is a stream event as well as a write callback error. Absorb it and
+// cooperatively settle the core operation instead of crashing during a write.
+process.stdout.on('error',()=>{host.controllers.forEach(c=>c.abort());process.exitCode=1;process.stdin.destroy();});
 const pending=new Set(), ids=new Set(); let buffer=Buffer.alloc(0), oversized=false;
 function line(data) {
  let q;
@@ -21,5 +24,5 @@ process.stdin.on('data',chunk=>{
  while((i=buffer.indexOf(10))>=0) {const data=buffer.subarray(0,i);buffer=buffer.subarray(i+1);if(!oversized&&data.length<=MAX)line(data);else send({requestID:null,type:'error',error:{code:'LIMIT',message:'JSONL message exceeds limit'}});oversized=false;}
  if(buffer.length>MAX){buffer=Buffer.alloc(0);oversized=true;}
 });
-process.stdin.on('end',async()=>{closing=true;if(buffer.length)send({requestID:null,type:'error',error:{code:'EOF',message:'Incomplete JSONL frame'}});host.controllers.forEach(c=>c.abort());await Promise.allSettled([...pending]);await output;});
+process.stdin.on('end',async()=>{closing=true;if(buffer.length)send({requestID:null,type:'error',error:{code:'EOF',message:'Incomplete JSONL frame'}});host.controllers.forEach(c=>c.abort());await Promise.allSettled([...pending]);await output.catch(()=>{});});
 process.stdin.on('error',()=>{host.controllers.forEach(c=>c.abort());process.exitCode=1;});

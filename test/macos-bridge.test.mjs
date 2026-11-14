@@ -45,7 +45,7 @@ test('bridge validates contract/suite in host and rejects invalid evolution befo
 test('bridge JSONL actual subprocess rejects malformed/oversized frames and serves multiple requests',async t=>{
  const {spawn}=await import('node:child_process');
  const {cwd}=await host(t);
- const child=spawn('/usr/local/bin/node',['macos/Bridge/main.mjs'],{cwd:process.cwd(),stdio:['pipe','pipe','pipe']});
+ const child=spawn('/usr/local/bin/node',[process.env.EVE_TEST_BRIDGE || 'macos/Bridge/main.mjs'],{cwd:process.cwd(),stdio:['pipe','pipe','pipe']});
  t.after(()=>child.kill()); let output=''; child.stdout.on('data',b=>{output+=b});
  const wait=async id=>{for(let n=0;n<300;n++){const found=output.split('\n').filter(Boolean).map(x=>JSON.parse(x)).find(x=>x.requestID===id&&x.type!=='event');if(found)return found;await new Promise(r=>setTimeout(r,10));}throw new Error('bridge response timeout');};
  child.stdin.write(JSON.stringify({requestID:'w',op:'workspace',params:{path:cwd}})+'\n'); assert.equal((await wait('w')).type,'result');
@@ -91,4 +91,21 @@ test('bridge actual APIs cover tools, compression, evolution scores, promote, ro
  assert.equal(auto.evolution.status,'evaluated');assert.equal(await fs.readFile(path.join(cwd,'out.txt'),'utf8'),'bad');assert.equal(generations,2);
  const experiments=await h.call('experiments',{});assert.equal(experiments.length,2);assert(experiments.every(e=>e.evaluation.cases[0].candidate.passed));
  const compressed=await h.call('compact',{sessionId:source.sessionId});assert.equal(compressed.status,'completed');assert.equal(compressed.context.summary,true);
+ let entered;const started=new Promise(resolve=>entered=resolve);
+ h.fetchImpl=async (_u,init)=>{entered();return new Promise((_,reject)=>init.signal.addEventListener('abort',()=>reject(new Error('cancelled generation')),{once:true}));};
+ const cancelling=h.call('evolve',args,'cancel-evolution');const rejected=assert.rejects(cancelling);await started;await h.call('cancel',{requestID:'cancel-evolution'});await rejected;
+ const records=await h.call('experiments',{});assert.equal(records.filter(x=>x.status==='failed').length,1);assert.equal((await h.call('capabilities',{})).active['native-proof'],baseline.hash);
+});
+
+test('bridge handles a closed stdout pipe without an uncaught exception',async t=>{
+ const {spawn}=await import('node:child_process');
+ const child=spawn('/usr/local/bin/node',[process.env.EVE_TEST_BRIDGE || 'macos/Bridge/main.mjs'],{cwd:process.cwd(),stdio:['pipe','pipe','pipe']});t.after(()=>child.kill());
+ let stderr='';child.stderr.on('data',b=>stderr+=b);child.stdout.destroy();
+ for(let i=0;i<20;i++)child.stdin.write(JSON.stringify({requestID:'closed-'+i,op:'busy'})+'\n');child.stdin.end();
+ await new Promise(resolve=>child.on('close',resolve));assert(!stderr.includes('Unhandled'));assert(!stderr.includes('throw er;'));
+});
+
+test('bridge omits unavailable evolution and error fields rather than inventing null outcomes',async t=>{
+ const {cwd,h}=await host(t);await h.call('workspace',{path:cwd});const result=await h.call('run',{prompt:'hello'});
+ assert(!Object.hasOwn(result,'evolution'));assert(!Object.hasOwn(result,'error'));
 });

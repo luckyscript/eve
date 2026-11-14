@@ -23,7 +23,7 @@ export class BridgeHost {
  safe(value) {
   if(typeof value==='string') return redact(value,this.config);
   if(Array.isArray(value)) return value.map(v=>this.safe(v));
-  if(value&&typeof value==='object') return Object.fromEntries(Object.entries(value).map(([k,v])=>[redact(k,this.config),this.safe(v)]));
+  if(value&&typeof value==='object') return Object.fromEntries(Object.entries(value).filter(([,v])=>v!==undefined).map(([k,v])=>[redact(k,this.config),this.safe(v)]));
   return value ?? null;
  }
  async call(op,p={},requestID='direct') {

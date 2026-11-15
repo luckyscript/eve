@@ -15,7 +15,7 @@ struct ContentView: View {
  }
  var body: some View {
   NavigationSplitView(columnVisibility: $columns) {
-   sidebar.navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 320)
+   sidebar.frame(minWidth: 240, idealWidth: 260, maxWidth: 320).navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 320)
     .toolbar(removing: .sidebarToggle)
   } detail: {
    VStack(spacing: 0) {
@@ -37,6 +37,7 @@ struct ContentView: View {
    }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(EveTheme.canvas)
     .toolbar(removing: .sidebarToggle)
   }
+  .navigationSplitViewStyle(.balanced)
   .font(.system(size: 13)).tint(EveTheme.accent).groupBoxStyle(EveGroupBoxStyle())
   .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
   .onReceive(NotificationCenter.default.publisher(for: .eveSearch)) { _ in showSearch = true; searchFocused = true }
@@ -121,7 +122,7 @@ struct ContentView: View {
    }
    HStack(spacing: 7) {
     Circle().fill(model.connected ? EveTheme.accent : .orange).frame(width: 6, height: 6)
-    Text(model.busy ? model.activity : model.connected ? "本地管道 · 就绪" : "Bridge 已断开").font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+    Text(model.busy ? model.activity : model.connected ? "就绪" : "连接已断开").font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
     Spacer(minLength: 0)
     QuietIconButton(title: "设置", symbol: "gearshape") { model.page = .settings }
    }.padding(.horizontal, 16).padding(.vertical, 12)

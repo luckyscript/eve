@@ -42,12 +42,13 @@ import CoreImage.CIFilterBuiltins
     Text("\(remote.connections.filter { text($0["state"]) == "online" }.count) 个中继连接在线 · \(remote.connections.reduce(0) { $0 + ($1["authenticated"] as? Int ?? 0) }) 个已认证连接").font(.caption).foregroundStyle(.secondary)
     HStack {
      Button(remote.enabled ? "停止远程访问" : "启用远程访问") { remote.run(remote.enabled ? "remote.stop" : "remote.start", model: model) }
-      .buttonStyle(.borderedProminent).disabled(blocked || (!remote.enabled && (remote.remoteBusy || remote.hasChanges)))
+      .buttonStyle(.borderedProminent).disabled(blocked || (!remote.enabled && (remote.remoteBusy || remote.hasChanges || remote.relayURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)))
      Button("生成邀请…") { remote.run("remote.invite", model: model) }
       .disabled(blocked || remote.remoteBusy || !remote.enabled)
      Spacer()
     }
-    if remote.loaded && remote.hasChanges { Text("设置有未保存的更改，请先保存再启用远程访问。").font(.caption).foregroundStyle(.orange) }
+    if remote.loaded && remote.relayURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { Text("先填写并保存中继地址，再启用远程访问和生成邀请。").font(.caption).foregroundStyle(.secondary) }
+    else if remote.loaded && remote.hasChanges { Text("设置有未保存的更改，请先保存再启用远程访问。").font(.caption).foregroundStyle(.orange) }
     Text("启用使用已保存设置，不会自动授予额外权限。停止会等待远程任务收尾；工作区切换与应用退出由宿主统一关闭连接。").font(.caption).foregroundStyle(.secondary)
    }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
   }

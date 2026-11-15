@@ -2,7 +2,10 @@
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
-APP="$PROJECT_ROOT/dist/Eve.app"
+mkdir -p "$PROJECT_ROOT/dist"
+BUILD_ROOT="$(mktemp -d "$PROJECT_ROOT/dist/.eve-build-XXXXXX")"
+APP="$BUILD_ROOT/Eve.app"
+trap 'rm -rf "$BUILD_ROOT"' EXIT
 RUNTIME_NODE=/usr/local/bin/node
 [ -x "$RUNTIME_NODE" ] || { echo 'Required Node binary missing: /usr/local/bin/node' >&2; exit 1; }
 mkdir -p .eve/runs
@@ -22,6 +25,10 @@ cp -R skills "$APP/Contents/Resources/skills"
 cp "$RUNTIME_NODE" "$APP/Contents/Resources/runtime/node"
 chmod +x "$APP/Contents/MacOS/Eve" "$APP/Contents/Resources/runtime/node"
 SOURCE_SHA="$(git rev-parse HEAD)"
+# Development builds must not claim to be an exact clean-commit artifact.
+if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+ SOURCE_SHA="${SOURCE_SHA}-dirty"
+fi
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -32,8 +39,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleDisplayName</key><string>Eve</string>
 <key>CFBundleIconFile</key><string>Eve.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>0.3.0</string>
+<key>CFBundleVersion</key><string>3</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>EveSourceRevision</key><string>$SOURCE_SHA</string>
@@ -49,4 +56,12 @@ codesign --force --sign - "$APP/Contents/Resources/runtime/node"
 codesign --force --sign - "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
 plutil -lint "$APP/Contents/Info.plist"
-echo "Built $APP (local arm64 client, ad-hoc signed; not notarized)."
+# Never truncate a running executable in-place or leave a half-built application.
+if [ -e "$PROJECT_ROOT/dist/Eve.app" ]; then
+ mv "$PROJECT_ROOT/dist/Eve.app" "$BUILD_ROOT/Previous.app"
+fi
+if ! mv "$APP" "$PROJECT_ROOT/dist/Eve.app"; then
+ [ ! -e "$BUILD_ROOT/Previous.app" ] || mv "$BUILD_ROOT/Previous.app" "$PROJECT_ROOT/dist/Eve.app"
+ exit 1
+fi
+echo "Built $PROJECT_ROOT/dist/Eve.app (local arm64 client, ad-hoc signed; not notarized)."

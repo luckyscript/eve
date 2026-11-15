@@ -11,6 +11,7 @@ node_modules/
 .eve/sessions/
 .eve/state/
 .eve/evolution/
+.eve/remote/
 .build/
 dist/
 macos/.swiftpm/

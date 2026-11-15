@@ -1,0 +1,11 @@
+.gradle/
+.gradle-user/
+.kotlin/
+**/build/
+local.properties
+.tools/
+*.hprof
+*.log
+captures/
+.externalNativeBuild/
+.cxx/

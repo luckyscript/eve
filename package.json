@@ -14,13 +14,17 @@
     "start": "node bin/eve.mjs tui",
     "eve": "node bin/eve.mjs",
     "test": "node --test test/*.test.mjs",
-    "check": "node --check bin/eve.mjs && node --check src/config.mjs && node --check src/skills.mjs && node --check src/tools.mjs && node --check src/agent.mjs && node --check src/sessions.mjs && node --check src/contracts.mjs && node --check src/tui.mjs && node --check scripts/verify-live.mjs && node --check scripts/verify-sessions-live.mjs && node --check src/registry.mjs && node --check src/evolution.mjs && node --check scripts/verify-evolution.mjs && node --check src/context.mjs && node --check scripts/verify-agent.mjs && node --check src/request-audit.mjs && node --check scripts/verification-evidence.mjs && node --check src/orchestration.mjs && node --check macos/Bridge/host.mjs && node --check macos/Bridge/main.mjs && node --check scripts/verify-macos-live.mjs && node --check macos/Bridge/local-config.mjs",
+    "check": "node --check bin/eve.mjs && node --check src/config.mjs && node --check src/skills.mjs && node --check src/tools.mjs && node --check src/agent.mjs && node --check src/sessions.mjs && node --check src/contracts.mjs && node --check src/tui.mjs && node --check scripts/verify-live.mjs && node --check scripts/verify-sessions-live.mjs && node --check src/registry.mjs && node --check src/evolution.mjs && node --check scripts/verify-evolution.mjs && node --check src/context.mjs && node --check scripts/verify-agent.mjs && node --check src/request-audit.mjs && node --check scripts/verification-evidence.mjs && node --check src/orchestration.mjs && node --check macos/Bridge/host.mjs && node --check macos/Bridge/main.mjs && node --check scripts/verify-macos-live.mjs && node --check macos/Bridge/local-config.mjs && node --check src/remote.mjs && node --check src/remote-cli.mjs && node --check src/remote-crypto.mjs && node --check src/remote-service.mjs && node --check src/remote-store.mjs && node --check remote/dev-relay.mjs && node --check remote/test-client.mjs && node --check remote/verify.mjs && node --check remote/verify-live.mjs && node --check remote/android-fixture.mjs",
     "verify:evolution": "node scripts/verify-evolution.mjs",
     "verify:live": "node scripts/verify-live.mjs",
     "verify:sessions-live": "node scripts/verify-sessions-live.mjs",
     "verify:tui": "python3 scripts/verify-tui.py",
     "verify:agent": "node scripts/verify-agent.mjs",
     "macos:build": "bash scripts/build-macos.sh",
-    "verify:macos": "node scripts/verify-macos-live.mjs"
+    "verify:macos": "node scripts/verify-macos-live.mjs",
+    "verify:remote": "node --test test/remote.test.mjs remote/verify.mjs",
+    "verify:remote-live": "node remote/verify-live.mjs",
+    "android:build": "bash android/scripts/build.sh :app:assembleDebug",
+    "android:test": "bash android/scripts/build.sh :app:testDebugUnitTest"
   }
 }

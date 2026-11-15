@@ -1,0 +1,2 @@
+# Keep the Gradle Windows launcher portable while normalizing its Git index.
+*.bat text eol=crlf

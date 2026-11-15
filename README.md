@@ -27,6 +27,23 @@ Eve 不把模型说“完成了”作为唯一依据：任务可以由宿主通�
 
 Node 核心使用原生 ESM，无第三方运行依赖，无需 `npm install`。当前为自行实现的 OpenAI-compatible 工具循环，**未接入 Pi 或 DeepSeek Harness 运行时**；前期调研见 [技术方案](docs/eve-agent-technical-proposal.md)。桌面版通过固定 Node 子进程复用同一套核心，不维护另一套 Agent 算法。
 
+## Android 客户端与中继连接
+
+新增 Kotlin / Jetpack Compose 原生 Android 客户端，通过兼容 [Alma Relay](https://github.com/yetone/alma-relay) 协议 1 的中继连接电脑上的 Eve。支持安全配对、设备状态、会话和任务、工具事件、取消、断线查询恢复、Skills / Capabilities / Context；模型密钥留在电脑端。
+
+```bash
+npm run android:build  # 输出 dist/Eve-android-debug.apk，需要 Android SDK / JDK
+npm run android:test
+# 电脑工作区先配置可用模型，且需自备 HTTPS 中继地址
+eve remote enable --relay-url https://relay.example --name "我的 Eve"
+eve remote start
+# 另开终端在同一工作区：eve remote pair
+```
+
+首次配对和电脑权限由本地 CLI 控制，手机只访问本配对创建的会话。电脑端默认不允许远程文件写入；需要显式配置。Eve 自行定义配对、身份认证与加密业务协议，**不声称与官方 Alma 客户端互通**。本版无 FCM、可靠后台常连、附件或远程进化管理；macOS 图形客户端的远程配对设置页尚未接入。
+
+构建环境、生产/loopback 中继、权限、安全边界、模拟器验证与已测范围见 [Android 与远程访问](docs/android-client.md)；协议见 [Remote v1](docs/remote-protocol-v1.md)。debug APK 为本地产物，未发布应用商店；仓库不包含公网中继部署、模型密钥或邀请码。
+
 ## 快速开始
 
 ```bash

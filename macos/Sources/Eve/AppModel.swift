@@ -295,6 +295,9 @@ enum Page: String, CaseIterable, Identifiable {
  func draftTitle(_ key: ConversationKey) -> String { SessionPresentation.title(prompt: drafts[key]?.prompt ?? "") }
  func resumeDraft(_ key: ConversationKey) {
   guard key.workspace == workspace else { return }
+  // After a restart the draft exists on disk, but the history cache is empty.
+  // Reuse normal navigation so an existing conversation never looks brand new.
+  if sessions.contains(where: { text($0["id"]) == key.session }) { resume(key.session); return }
   storeDraft()
   if cachedRuns[key] != nil || sessions.contains(where: { text($0["id"]) == key.session }) { selectedSession = key.session }
   else { selectedSession = ""; draftID = key.session }

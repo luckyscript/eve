@@ -1,3 +1,4 @@
+import { readSSE } from './provider-stream.mjs';
 import { auditRequest } from './request-audit.mjs';
 import { TOOL_SCHEMAS, createTools } from './tools.mjs';
 import { discoverSkills, skillsCatalog } from './skills.mjs';
@@ -36,21 +37,22 @@ export function withAbort(promise, signal) {
     Promise.resolve(promise).then(value => { signal.removeEventListener('abort', aborted); resolve(value); }, error => { signal.removeEventListener('abort', aborted); reject(error); });
   });
 }
-export async function chatCompletion(config, messages, signal, fetchImpl = fetch, { tools = true, requestKind = tools ? 'task' : 'generation' } = {}) {
+export async function chatCompletion(config, messages, signal, fetchImpl = fetch, { tools = true, requestKind = tools ? 'task' : 'generation', stream=false, onDelta } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
   await auditRequest(config, messages, requestKind);
   signal?.throwIfAborted();
   const response = await fetchImpl(config.baseUrl + '/chat/completions', {
     method: 'POST', headers, signal,
-    body: JSON.stringify({ model: config.model, messages, ...(tools ? { tools: TOOL_SCHEMAS, tool_choice: 'auto' } : {}), stream: false, temperature: config.temperature, max_tokens: config.maxOutputTokens }),
+    body: JSON.stringify({ model: config.model, messages, ...(tools ? { tools: TOOL_SCHEMAS, tool_choice: 'auto' } : {}), stream, temperature: config.temperature, max_tokens: config.maxOutputTokens }),
   });
   if (!response.ok) {
     await response.body?.cancel();
     // Do not echo provider bodies: they can include credentials or full prompts.
-    throw new AgentError('HTTP', `模型接口返回 HTTP ${response.status}`);
+    throw new AgentError('HTTP', `模型接口返回 HTTP ${response.status}；请检查凭据、服务地址和模型权限`);
   }
-  const data = await responseJson(response);
+  const data = stream && response.headers?.get('content-type')?.toLowerCase().includes('text/event-stream') ? await readSSE(response,{signal,config,onDelta}) : await responseJson(response);
+  if(stream && !response.headers?.get('content-type')?.toLowerCase().includes('text/event-stream') && typeof data.choices?.[0]?.message?.content==='string') onDelta?.(redact(data.choices[0].message.content,config));
   const choice = data.choices?.[0];
   const message = choice?.message;
   if (!message || message.role !== 'assistant' || (message.content != null && typeof message.content !== 'string')) throw new AgentError('PROTOCOL', '模型没有返回有效 assistant 消息');
@@ -64,7 +66,7 @@ export async function chatCompletion(config, messages, signal, fetchImpl = fetch
   }
   return { message: { role: 'assistant', content: message.content ?? null, ...(calls.length ? { tool_calls: calls } : {}) }, finishReason: choice.finish_reason, usage: data.usage || {} };
 }
-export async function runAgent({ cwd = process.cwd(), config, prompt, history = [], contextSummary, contextSources = [], previousSkills = [], runId, contract, requiredSkillHash, compact = false, compactOnly = false, signal, onEvent = () => {}, fetchImpl = fetch, onCheckpoint = async () => {} }) {
+export async function runAgent({ cwd = process.cwd(), config, prompt, history = [], contextSummary, contextSources = [], previousSkills = [], runId, contract, requiredSkillHash, compact = false, compactOnly = false, stream = false, signal, onEvent = () => {}, fetchImpl = fetch, onCheckpoint = async () => {} }) {
   const startedAt = Date.now();
   const timeout = AbortSignal.timeout(config.timeoutMs);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
@@ -122,8 +124,9 @@ export async function runAgent({ cwd = process.cwd(), config, prompt, history = 
         try { const r = JSON.parse(m.content); return r.ok && r.result?.hash === hash && r.result.content === content; } catch { return false; }
       })).map(([hash]) => hash);
       await emit({ type: 'model_start', step, request: stats.modelRequests + 1, loadedSkillHashes, requestDigest: messageHash(requestMessages) }); stats.modelRequests++;
-      const answer = await withAbort(chatCompletion(config, requestMessages, combined, fetchImpl), combined);
+      const answer = await withAbort(chatCompletion(config, requestMessages, combined, fetchImpl, {stream,onDelta:text=>{for(let i=0;i<text.length;){let end=Math.min(i+8192,text.length);if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;onEvent({type:'assistant_delta',text:text.slice(i,end).toWellFormed(),step});i=end;}}}), combined);
       await emit({ type: 'model_response', step, finishReason: answer.finishReason }, { answer });
+      if (answer.finishReason === 'content_filter') throw new AgentError('PROTOCOL', '模型响应被内容过滤中断，未执行其中任何工具');
       if (answer.finishReason === 'length') throw new AgentError('OUTPUT_LIMIT', '模型响应被截断，未执行其中任何工具');
       stats.promptTokens += Number(answer.usage.prompt_tokens) || 0;
       stats.completionTokens += Number(answer.usage.completion_tokens) || 0;

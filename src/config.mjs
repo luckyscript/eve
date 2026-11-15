@@ -19,7 +19,7 @@ const ENV_FIELDS = {
 const NUMBERS = new Set(['maxSteps', 'maxToolCalls', 'timeoutMs', 'maxOutputTokens', 'maxToolChars', 'temperature', 'contextMaxChars', 'contextRecentGroups', 'contextSummaryChars']);
 export function validateConfig(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('配置必须是 JSON 对象');
-  for (const key of Object.keys(input)) if (!(key in DEFAULTS)) throw new Error(`未知配置项：${key}`);
+  for (const key of Object.keys(input)) if (!Object.hasOwn(DEFAULTS,key)) throw new Error(`未知配置项：${key}`);
   const c = { ...DEFAULTS, ...input };
   let url;
   try { url = new URL(c.baseUrl); } catch { throw new Error('baseUrl 必须是有效 HTTP(S) URL'); }
@@ -62,7 +62,7 @@ export function redact(text, c) {
   return value;
 }
 export async function setLocalConfig(cwd, key, value) {
-  if (!(key in DEFAULTS)) throw new Error(`未知配置项：${key}`);
+  if (!Object.hasOwn(DEFAULTS,key)) throw new Error(`未知配置项：${key}`);
   if (key === 'apiKey') throw new Error('密钥请用 EVE_API_KEY 或手动编辑忽略追踪的 .eve/config.local.json，避免 shell 历史泄露');
   let parsed = value;
   if (NUMBERS.has(key)) parsed = Number(value);
@@ -73,4 +73,32 @@ export async function setLocalConfig(cwd, key, value) {
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, JSON.stringify({ ...old, [key]: parsed }, null, 2) + '\n', { mode: 0o600 });
   await fs.chmod(file, 0o600);
+}
+
+// Inspection is deliberately tolerant, while loadConfig remains fail-closed.
+export async function inspectConfig({cwd=process.cwd(),env=process.env}={}) {
+ const files=[path.join(os.homedir(),'.config','eve','config.json'),path.join(cwd,'.eve','config.json'),path.join(cwd,'.eve','config.local.json')];
+ if(env.EVE_CONFIG) files.push(path.resolve(cwd,env.EVE_CONFIG));
+ let config={...DEFAULTS}, sources=Object.fromEntries(Object.keys(DEFAULTS).map(k=>[k,'default'])), diagnostics=[];
+ for(const file of files) {
+  let data;
+  try { data=JSON.parse(await fs.readFile(file,'utf8')); }
+  catch(e) {if(e.code==='ENOENT')continue;diagnostics.push({code:'CONFIG',message:'配置文件无法读取或 JSON 无效，请修复该文件',path:file});continue;}
+  if(!data||typeof data!=='object'||Array.isArray(data)){diagnostics.push({code:'CONFIG',message:'配置必须是 JSON 对象',path:file});continue;}
+  for(const [key,value] of Object.entries(data)) {
+   try {validateConfig({[key]:value});config[key]=value;sources[key]=file;}
+   catch {diagnostics.push({code:'CONFIG',message:Object.hasOwn(DEFAULTS,key)?`配置项 ${key} 无效，请填写合法值`:'含未知配置项；请显式修复文件字段',path:file});}
+  }
+ }
+ for(const [name,key] of Object.entries(ENV_FIELDS)) if(env[name]!==undefined) {
+  try {const value=NUMBERS.has(key)?Number(env[name]):env[name];validateConfig({[key]:value});config[key]=value;sources[key]=name;}
+  catch {diagnostics.push({code:'CONFIG',message:`环境变量 ${name} 无效，请修复环境设置`});}
+ }
+ return {config:validateConfig(config),valid:diagnostics.length===0,diagnostics,sources};
+}
+
+// Hold only a suffix that could become a credential; never emit partial keys.
+export function createStreamRedactor(config) {
+ const secret=config?.apiKey||'';let pending='';
+ return {push(text){pending+=redact(text,{});let out='';while(pending){if(secret&&pending.startsWith(secret)){out+='[redacted]';pending=pending.slice(secret.length);continue;}if(secret&&secret.startsWith(pending))break;if(pending.length===1&&/[\uD800-\uDBFF]/.test(pending))break;out+=pending[0];pending=pending.slice(1);}return redact(out,{});},flush(){const out=pending;pending='';return redact(out.toWellFormed(),config);},discard(){pending='';}};
 }

@@ -119,13 +119,19 @@ export async function loadSession(cwd, id) {
   const session = await openSession(cwd, id, { create: false });
   try { return structuredClone(session.data); } finally { await session.close(); }
 }
-export async function listSessions(cwd) {
+export async function listSessions(cwd, {query, includeArchived=false} = {}) {
   const dir = await directory(cwd);
   const items = [];
-  for (const file of (await fs.readdir(dir)).sort()) if (/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.json$/.test(file)) {
+  for (const file of (await fs.readdir(dir)).filter(f=>/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.json$/.test(f)).sort().slice(0,1000)) if (/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.json$/.test(file)) {
     const id = file.slice(0, -5);
-    try { const data = await loadSession(cwd, id); items.push({ id, runs: data.runs.length, status: data.runs.at(-1)?.status || 'new', updatedAt: data.updatedAt }); }
-    catch { items.push({ id, status: 'unavailable' }); }
+    try { const data = await loadSession(cwd, id);
+      if(data.archived&&!includeArchived)continue;
+      if(query){let remaining=4*1024*1024,matched=(data.title||'').toLowerCase().includes(query.toLowerCase());
+       for(const run of data.runs){for(const text of [run.prompt,run.final,...run.messages.map(m=>m.content)]){if(typeof text!=='string')continue;const part=text.slice(0,remaining);remaining-=part.length;if(part.toLowerCase().includes(query.toLowerCase())){matched=true;break;}if(!remaining)break;}if(matched||!remaining)break;}
+       if(!matched)continue;
+      }
+      items.push({ id, title:data.title||data.runs[0]?.prompt?.slice(0,160).toWellFormed()||id, archived:!!data.archived, runs: data.runs.length, status: data.runs.at(-1)?.status || 'new', updatedAt: data.updatedAt }); }
+    catch { items.push({ id, title:id, archived:false, status: 'unavailable' }); }
   }
   return items;
 }
@@ -224,4 +230,13 @@ export async function sessionStatus(cwd, sessionId, config) {
   const run = data.runs.at(-1);
   const context = data.context?.baseRunId === run?.id ? data.context : run?.context;
   return { sessionId, runs: data.runs.length, status: run?.status || 'new', contextChars: context?.chars || 0, contextMaxChars: config.contextMaxChars, summary: !!context?.summary, summaryMethod: context?.summary?.method, summarizedMessages: context?.summary?.sources?.length || 0, compactions: context?.compactions || 0 };
+}
+
+export async function updateSession(cwd,id,change) {
+ const session=await openSession(cwd,id,{create:false});
+ try {Object.assign(session.data,change);await session.save();return {id,title:session.data.title||session.data.runs[0]?.prompt?.slice(0,160).toWellFormed()||id,archived:!!session.data.archived};}finally{await session.close();}
+}
+export async function deleteSession(cwd,id) {
+ validateSessionId(id);const dir=await directory(cwd),release=await acquire(dir,id);
+ try {const file=path.join(dir,`${id}.json`);await regular(file);await fs.unlink(file);await syncDirectory(dir);return {id,deleted:true,writesReverted:false};}finally{await release();}
 }
